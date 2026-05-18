@@ -1,0 +1,4 @@
+chat.the200.blog {
+    reverse_proxy localhost:8000
+    encode gzip
+}

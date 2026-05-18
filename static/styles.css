@@ -1,0 +1,462 @@
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  --bg: #f6efe2;
+  --surface: #ffffff;
+  --surface-2: #f1ece2;
+  --border: #e6dccb;
+  --text: #1f1d1a;
+  --muted: #837b6e;
+  --user-bg: #2b2723;
+  --user-fg: #faf6ef;
+  --accent: #b85c3e;
+  --accent-hover: #a44e34;
+  --error-bg: #fff5f1;
+  --error-border: #ecc9c0;
+  --error-fg: #903820;
+  --radius: 14px;
+  --radius-sm: 10px;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  max-width: 780px;
+  margin: 0 auto;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: 0 20px;
+}
+
+/* Header */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.brand .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(184, 92, 62, 0.15);
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.brand-title {
+  font-family: "Iowan Old Style", "Charter", "Georgia", serif;
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.brand-sub {
+  font-size: 0.72rem;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+button.ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 6px 13px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+button.ghost:hover {
+  background: var(--surface);
+  border-color: var(--muted);
+}
+
+/* Conversation area */
+#conversation {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 4px;
+  display: flex;
+  flex-direction: column;
+  scroll-behavior: smooth;
+}
+
+#messages {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Empty state */
+.empty-state {
+  margin: auto 0;
+  padding: 24px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.empty-state.hidden {
+  display: none;
+}
+
+.empty-state h2 {
+  font-family: "Iowan Old Style", "Charter", "Georgia", serif;
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.empty-state p {
+  margin: 0;
+  color: var(--muted);
+  max-width: 58ch;
+  line-height: 1.55;
+}
+
+.empty-state a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(184, 92, 62, 0.35);
+  transition: border-color 0.15s;
+}
+
+.empty-state a:hover {
+  border-bottom-color: var(--accent);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.chip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 8px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, transform 0.06s, background 0.15s;
+}
+
+.chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chip:active {
+  transform: translateY(1px);
+}
+
+/* Bubbles */
+.bubble {
+  max-width: 86%;
+  padding: 11px 15px;
+  border-radius: var(--radius);
+  line-height: 1.55;
+  animation: fadeUp 0.18s ease-out;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.bubble.user {
+  align-self: flex-end;
+  background: var(--user-bg);
+  color: var(--user-fg);
+  white-space: pre-wrap;
+  border-bottom-right-radius: 4px;
+}
+
+.bubble.assistant {
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+
+.bubble.assistant > *:first-child {
+  margin-top: 0;
+}
+.bubble.assistant > *:last-child {
+  margin-bottom: 0;
+}
+
+.bubble.assistant h1,
+.bubble.assistant h2,
+.bubble.assistant h3 {
+  font-family: "Iowan Old Style", "Charter", "Georgia", serif;
+  margin: 14px 0 6px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.bubble.assistant h1 {
+  font-size: 1.2rem;
+}
+.bubble.assistant h2 {
+  font-size: 1.1rem;
+}
+.bubble.assistant h3 {
+  font-size: 1rem;
+}
+
+.bubble.assistant p {
+  margin: 8px 0;
+}
+
+.bubble.assistant ul,
+.bubble.assistant ol {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+
+.bubble.assistant li {
+  margin: 3px 0;
+}
+
+.bubble.assistant a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(184, 92, 62, 0.3);
+}
+
+.bubble.assistant a:hover {
+  border-bottom-color: var(--accent);
+}
+
+.bubble.assistant code {
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.92em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.bubble.assistant pre {
+  background: var(--surface-2);
+  padding: 10px 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 0.92em;
+}
+
+.bubble.assistant pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.bubble.assistant blockquote {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+}
+
+.bubble.error {
+  align-self: flex-start;
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  color: var(--error-fg);
+}
+
+/* Typing indicator */
+.typing {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  padding: 2px 0;
+}
+
+.typing span {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--muted);
+  animation: bounce 1.2s infinite ease-in-out;
+}
+
+.typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* Composer */
+#composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-top: 10px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+#composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(184, 92, 62, 0.12);
+}
+
+#input {
+  flex: 1;
+  resize: none;
+  padding: 8px 4px;
+  font: inherit;
+  border: none;
+  background: transparent;
+  outline: none;
+  max-height: 200px;
+  min-height: 24px;
+  line-height: 1.45;
+  color: var(--text);
+  overflow-y: auto;
+}
+
+#input::placeholder {
+  color: var(--muted);
+}
+
+#send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--user-fg);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, transform 0.05s;
+}
+
+#send:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+#send:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+#send:disabled {
+  background: var(--border);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.hint {
+  margin: 8px 4px 14px;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.hint kbd {
+  font-family: inherit;
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+}
+
+/* Scrollbar polish */
+#conversation::-webkit-scrollbar,
+#input::-webkit-scrollbar {
+  width: 8px;
+}
+
+#conversation::-webkit-scrollbar-thumb,
+#input::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+
+#conversation::-webkit-scrollbar-thumb:hover,
+#input::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+@media (max-width: 600px) {
+  #app {
+    padding: 0 12px;
+  }
+  .bubble {
+    max-width: 92%;
+  }
+  .empty-state h2 {
+    font-size: 1.4rem;
+  }
+  .hint {
+    display: none;
+  }
+  .brand-sub {
+    display: none;
+  }
+}
