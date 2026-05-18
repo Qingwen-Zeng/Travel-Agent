@@ -6,8 +6,12 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 .DS_Store
+
+# Private docs (not shared)
 CLAUDE.md
 DEPLOY.md
+
+
 # Python
 __pycache__/
 *.py[cod]
