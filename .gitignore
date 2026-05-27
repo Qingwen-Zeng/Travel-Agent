@@ -6,10 +6,12 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 .DS_Store
-
+.agents/
+.claude/
 # Private docs (not shared)
 CLAUDE.md
 DEPLOY.md
+CONTEXT.md
 #ssh
 SSH/
 
