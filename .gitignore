@@ -46,6 +46,15 @@ chroma/
 chroma_db/
 profile_index.zip
 
+# Travel Agent: owner's raw import data and built database
+data/raw/
+*.db
+*.db-shm
+*.db-wal
+Saved/
+stories.json
+stories.faiss
+
 # Editor / OS
 .vscode/
 .idea/
