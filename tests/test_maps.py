@@ -79,6 +79,75 @@ def test_rows_with_city_column_include_it_per_marker():
     assert payload["markers"][0]["city"] == "Zurich"
 
 
+def test_optional_detail_fields_included_only_when_present_and_not_null():
+    rows = [
+        {
+            "title": "Pralus",
+            "lat": 48.86,
+            "lng": 2.35,
+            "note": "praluline",
+            "category": "Desserts",
+            "maps_url": "https://maps/1",
+            "rating": 4.5,
+            "review_count": 128,
+            "phone": "+33 1 23 45 67 89",
+            "website": "https://pralus.fr",
+            "photo_path": None,
+        }
+    ]
+
+    payload = build_map_payload("Paris", rows)
+
+    marker = payload["markers"][0]
+    assert marker["rating"] == 4.5
+    assert marker["phone"] == "+33 1 23 45 67 89"
+    assert marker["website"] == "https://pralus.fr"
+    assert "review_count" not in marker  # not exposed — the owner's own note is used instead
+    assert "photo_url" not in marker
+
+
+def test_photo_path_becomes_a_static_url():
+    rows = [
+        {
+            "title": "Pralus",
+            "lat": 48.86,
+            "lng": 2.35,
+            "note": None,
+            "category": "Desserts",
+            "maps_url": "u",
+            "photo_path": "spot_photos/42.jpg",
+        }
+    ]
+
+    payload = build_map_payload("Paris", rows)
+
+    assert payload["markers"][0]["photo_url"] == "/static/spot_photos/42.jpg"
+
+
+def test_null_detail_fields_are_omitted_not_included_as_null():
+    rows = [
+        {
+            "title": "Pralus",
+            "lat": 48.86,
+            "lng": 2.35,
+            "note": None,
+            "category": "Desserts",
+            "maps_url": "u",
+            "rating": None,
+            "review_count": None,
+            "phone": None,
+            "website": None,
+            "photo_path": None,
+        }
+    ]
+
+    payload = build_map_payload("Paris", rows)
+
+    marker = payload["markers"][0]
+    for field in ("rating", "review_count", "phone", "website", "photo_url"):
+        assert field not in marker
+
+
 def test_works_with_real_db_rows(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     conn.execute("INSERT INTO cities (name) VALUES ('Zurich')")

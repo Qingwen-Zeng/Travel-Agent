@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Travel Spots</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
   <script>
     window.APP_CONFIG = {
       mapId: {{ google_maps_map_id | tojson }}
@@ -18,33 +18,54 @@
   </script>
 </head>
 <body>
-  <div class="chat-page">
-    <div id="chat-log" class="chat-log" aria-live="polite">
-      <div id="empty-state" class="empty-state">
-        <p class="empty-state-greeting">So happy that you stumbled onto my AI & engine! I'm Joey, a frequent traveler who's been to over 70 countries & 7 continents. A nomad for over 15 years, I lived in many cities, learned a lot and reviewed them all. Ask questions about my favorite restaurants, things to do, and city reviews to help plan your trip! Don't forget dessert spots, I love dessert! Some examples:</p>
-        {% if suggestion_chips %}
-        <div class="suggestion-chips">
-          {% for label in suggestion_chips %}
-          <button type="button" class="suggestion-chip" data-question="{{ label }}">
-            {{ label }}
-          </button>
-          {% endfor %}
-        </div>
-        {% endif %}
+  <div class="app-layout">
+    <nav class="sidebar" aria-label="Conversations">
+      <button type="button" id="new-chat-button" class="new-chat-button">+ New chat</button>
+      <ul id="conversation-list" class="conversation-list"></ul>
+    </nav>
+    <div class="chat-page chat-page-empty">
+      <div class="chat-header">
+        <button
+          type="button"
+          id="sidebar-toggle"
+          class="sidebar-toggle"
+          aria-label="Toggle conversations"
+          aria-expanded="false"
+        >☰</button>
       </div>
-    </div>
+      <div id="chat-log" class="chat-log" aria-live="polite">
+        <div id="empty-state" class="empty-state">
+          <p class="empty-state-greeting">So happy that you stumbled onto my AI & engine! I'm Joey, a frequent traveler who's been to over 70 countries & 7 continents. A nomad for over 15 years, I lived in many cities, learned a lot and reviewed them all. Ask questions about my favorite restaurants, things to do, and city reviews to help plan your trip! Don't forget dessert spots, I love dessert! Some examples:</p>
+          <div class="chat-form-slot"></div>
+          {% if suggestion_chips %}
+          <div class="suggestion-section">
+            <p class="suggestion-label">Try asking</p>
+            <div class="suggestion-chips">
+              {% for label in suggestion_chips %}
+              <button type="button" class="suggestion-chip" data-question="{{ label }}">
+                <span class="suggestion-chip-dot" aria-hidden="true"></span>
+                <span class="suggestion-chip-text">{{ label }}</span>
+              </button>
+              {% endfor %}
+            </div>
+            <p class="suggestion-footer-hint">Don't see your destination? Just type it above — I've probably been there.</p>
+          </div>
+          {% endif %}
+        </div>
+      </div>
 
-    <form id="chat-form" class="chat-form">
-      <input
-        id="chat-input"
-        type="text"
-        placeholder="Ask about a city, or anything travel related…"
-        autocomplete="off"
-        required
-      >
-      <button type="submit">Send</button>
-    </form>
+      <form id="chat-form" class="chat-form">
+        <input
+          id="chat-input"
+          type="text"
+          placeholder="Ask about any city, restaurant, or trip idea…"
+          autocomplete="off"
+          required
+        >
+        <button type="submit" class="chat-form-submit" aria-label="Send">→</button>
+      </form>
+    </div>
   </div>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v={{ asset_version }}"></script>
 </body>
 </html>

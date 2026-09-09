@@ -40,6 +40,15 @@ CREATE TABLE IF NOT EXISTS city_stories (
 );
 
 CREATE INDEX IF NOT EXISTS idx_city_stories_city ON city_stories(city_id);
+
+CREATE TABLE IF NOT EXISTS spot_details (
+    spot_id      INTEGER PRIMARY KEY REFERENCES spots(id) ON DELETE CASCADE,
+    rating       REAL,
+    review_count INTEGER,
+    phone        TEXT,
+    website      TEXT,
+    photo_path   TEXT
+);
 """
 
 

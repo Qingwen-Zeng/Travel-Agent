@@ -43,12 +43,20 @@ def get_all_city_categories(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+_DETAIL_COLUMNS = (
+    "spot_details.rating, spot_details.review_count, spot_details.phone, "
+    "spot_details.website, spot_details.photo_path"
+)
+_DETAIL_JOIN = "LEFT JOIN spot_details ON spot_details.spot_id = spots.id"
+
+
 def get_city_spots(conn: sqlite3.Connection, city_name: str) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT spots.title, spots.lat, spots.lng, spots.note, categories.name AS category, "
-        "spots.maps_url\n"
+        f"spots.maps_url, {_DETAIL_COLUMNS}\n"
         "  FROM spots\n"
         "  JOIN categories ON categories.id = spots.category_id\n"
+        f"  {_DETAIL_JOIN}\n"
         " WHERE spots.city_id = (SELECT id FROM cities WHERE name = ?)\n"
         " ORDER BY spots.title;",
         (city_name,),
@@ -61,9 +69,10 @@ def get_city_spots_by_categories(
     placeholders = ",".join("?" * len(categories))
     return conn.execute(
         "SELECT spots.title, spots.lat, spots.lng, spots.note, categories.name AS category, "
-        "spots.maps_url\n"
+        f"spots.maps_url, {_DETAIL_COLUMNS}\n"
         "  FROM spots\n"
         "  JOIN categories ON categories.id = spots.category_id\n"
+        f"  {_DETAIL_JOIN}\n"
         " WHERE spots.city_id = (SELECT id FROM cities WHERE name = ?)\n"
         f"   AND categories.name IN ({placeholders})\n"
         " ORDER BY spots.title;",
@@ -74,10 +83,11 @@ def get_city_spots_by_categories(
 def get_country_spots(conn: sqlite3.Connection, country_name: str) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT spots.title, spots.lat, spots.lng, spots.note, categories.name AS category, "
-        "spots.maps_url, cities.name AS city\n"
+        f"spots.maps_url, cities.name AS city, {_DETAIL_COLUMNS}\n"
         "  FROM spots\n"
         "  JOIN categories ON categories.id = spots.category_id\n"
         "  JOIN cities ON cities.id = spots.city_id\n"
+        f"  {_DETAIL_JOIN}\n"
         " WHERE cities.country = ?\n"
         " ORDER BY cities.name, spots.title;",
         (country_name,),
@@ -90,10 +100,11 @@ def get_country_spots_by_categories(
     placeholders = ",".join("?" * len(categories))
     return conn.execute(
         "SELECT spots.title, spots.lat, spots.lng, spots.note, categories.name AS category, "
-        "spots.maps_url, cities.name AS city\n"
+        f"spots.maps_url, cities.name AS city, {_DETAIL_COLUMNS}\n"
         "  FROM spots\n"
         "  JOIN categories ON categories.id = spots.category_id\n"
         "  JOIN cities ON cities.id = spots.city_id\n"
+        f"  {_DETAIL_JOIN}\n"
         " WHERE cities.country = ?\n"
         f"   AND categories.name IN ({placeholders})\n"
         " ORDER BY cities.name, spots.title;",
@@ -109,9 +120,10 @@ def search_city_spots(conn: sqlite3.Connection, city_name: str, query: str) -> l
     pattern = f"%{_escape_like(query)}%"
     return conn.execute(
         "SELECT spots.title, spots.lat, spots.lng, spots.note, categories.name AS category, "
-        "spots.maps_url\n"
+        f"spots.maps_url, {_DETAIL_COLUMNS}\n"
         "  FROM spots\n"
         "  JOIN categories ON categories.id = spots.category_id\n"
+        f"  {_DETAIL_JOIN}\n"
         " WHERE spots.city_id = (SELECT id FROM cities WHERE name = ?)\n"
         "   AND (spots.title LIKE ? ESCAPE '\\' OR spots.note LIKE ? ESCAPE '\\')\n"
         " ORDER BY spots.title;",

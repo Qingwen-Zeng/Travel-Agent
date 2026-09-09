@@ -54,6 +54,7 @@ data/raw/
 Saved/
 stories.json
 stories.faiss
+app/static/spot_photos/
 
 # Editor / OS
 .vscode/

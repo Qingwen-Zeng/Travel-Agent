@@ -8,6 +8,16 @@
   --color-accent: #3f4f4a;
   --color-accent-hover: #33423d;
   --color-accent-text: #f6f3ec;
+
+  /* Neutral, Google-style palette for the floating map card (list + detail views) —
+     deliberately not the app's own warm theme, to match that reference UI exactly. */
+  --map-card-bg: #ffffff;
+  --map-card-border: #e8eaed;
+  --map-card-text: #202124;
+  --map-card-text-muted: #5f6368;
+  --map-card-hover: #f1f3f4;
+  --map-card-accent: #202124;
+  --map-card-accent-text: #ffffff;
 }
 
 * {
@@ -22,13 +32,122 @@ body {
   letter-spacing: 0.01em;
 }
 
+.app-layout {
+  display: flex;
+  height: 100vh;
+}
+
+.sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem 0.75rem;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  overflow-y: auto;
+}
+
+.new-chat-button {
+  display: block;
+  width: 100%;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.new-chat-button:hover {
+  background: var(--color-surface-hover);
+}
+
+.conversation-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.conversation-item {
+  display: block;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 0.85rem;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.conversation-item:hover {
+  background: var(--color-surface-hover);
+}
+
+.conversation-item-active {
+  background: var(--color-border);
+  font-weight: 600;
+}
+
+.conversation-item.disabled,
+.new-chat-button.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.chat-header {
+  display: none;
+  padding: 0.75rem 0 0;
+}
+
+.sidebar-toggle {
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.4rem 0.65rem;
+  cursor: pointer;
+}
+
 .chat-page {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  flex: 1;
+  min-width: 0;
   max-width: 720px;
   margin: 0 auto;
   padding: 0 1.25rem;
+}
+
+/* On the start screen (no messages yet), the log hugs its content instead of
+   filling the page, and .chat-page-empty centers that content + the input bar
+   together — so the input sits right under the greeting, not pinned to the
+   bottom of the viewport. */
+.chat-page-empty {
+  justify-content: center;
+}
+
+.chat-page-empty .chat-log {
+  flex: 0 1 auto;
+}
+
+.chat-page-empty .chat-form {
+  margin: 0;
 }
 
 .chat-log {
@@ -60,31 +179,51 @@ body {
 
 .empty-state {
   margin: auto 0;
-  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+  text-align: left;
 }
 
 .empty-state-greeting {
-  color: var(--color-text-muted);
-  font-size: 1.05rem;
+  color: var(--color-text);
+  font-size: 1.1rem;
   font-weight: 400;
-  line-height: 1.6;
-  margin: 0 0 1.5rem;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.suggestion-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.suggestion-label {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
 }
 
 .suggestion-chips {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  flex-direction: column;
   gap: 0.6rem;
 }
 
 .suggestion-chip {
-  padding: 0.5rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.85rem 1.1rem;
   border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border-radius: 12px;
   background: var(--color-surface);
   color: var(--color-text);
-  font-size: 0.85rem;
+  font-size: 0.9rem;
+  text-align: left;
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
@@ -92,6 +231,21 @@ body {
 .suggestion-chip:hover {
   background: var(--color-surface-hover);
   border-color: #d3cdba;
+}
+
+.suggestion-chip-dot {
+  flex-shrink: 0;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+}
+
+.suggestion-footer-hint {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  text-align: center;
 }
 
 .chat-bubble {
@@ -144,6 +298,22 @@ body {
   font-size: 0.85em;
 }
 
+.spot-name-link {
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.spot-name-link:hover {
+  color: var(--color-accent-hover);
+}
+
 .chat-bubble-pending {
   opacity: 0.55;
   font-style: italic;
@@ -153,26 +323,346 @@ body {
 .chat-map {
   align-self: stretch;
   flex-shrink: 0;
-  height: 340px;
+  position: relative;
+  height: 420px;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid var(--color-border);
 }
 
+.chat-map-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+/* A floating card overlaid on the map, not a sidebar splitting its space. Collapses
+   down to just its header on request, so the map underneath is easier to see. */
+.chat-map-list {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 320px;
+  max-width: calc(100% - 1.5rem);
+  max-height: calc(100% - 1.5rem);
+  overflow: hidden;
+  background: var(--map-card-bg);
+  border-radius: 10px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  transition: max-height 0.2s ease;
+}
+
+.chat-map-list.chat-map-list-collapsed {
+  max-height: 2.7rem;
+}
+
+.chat-map-list-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.65rem 0.8rem;
+  border: none;
+  border-bottom: 1px solid var(--map-card-border);
+  background: none;
+  color: var(--map-card-text);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-map-list-toggle-icon {
+  color: var(--map-card-text-muted);
+  transition: transform 0.2s ease;
+}
+
+.chat-map-list-collapsed .chat-map-list-toggle-icon {
+  transform: rotate(180deg);
+}
+
+.chat-map-list-items {
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.map-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border: none;
+  border-bottom: 1px solid var(--map-card-border);
+  background: none;
+  color: var(--map-card-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.map-list-item:last-child {
+  border-bottom: none;
+}
+
+.map-list-item:hover,
+.map-list-item-active {
+  background: var(--map-card-hover);
+}
+
+.map-list-item-active {
+  box-shadow: inset 3px 0 0 var(--map-card-accent);
+}
+
+.map-list-item-thumb {
+  flex-shrink: 0;
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--map-card-border);
+}
+
+.map-list-item-badge {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 8px;
+  background: var(--map-card-border);
+  color: var(--map-card-text);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.map-list-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  padding-top: 0.1rem;
+}
+
+.map-list-item-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--map-card-text);
+}
+
+.map-list-item-meta {
+  font-size: 0.82rem;
+  color: var(--map-card-text-muted);
+}
+
+.map-list-item-note {
+  font-size: 0.85rem;
+  color: var(--map-card-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* A small white rating badge on the map itself — real rating when we have one,
+   otherwise the spot's position in the list. Solid when it's the selected spot. */
+.map-marker-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.9rem;
+  height: 1.7rem;
+  padding: 0 0.4rem;
+  border-radius: 6px;
+  border: none;
+  background: var(--map-card-bg);
+  color: var(--map-card-text);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  transition: transform 0.1s ease, background-color 0.15s ease;
+}
+
+.map-marker-badge:hover {
+  background: var(--map-card-hover);
+  transform: scale(1.15);
+}
+
+.map-marker-badge-active {
+  background: var(--map-card-accent);
+  color: var(--map-card-accent-text);
+}
+
+/* The detail view replaces the list inside the same floating card when a spot is
+   selected — same footprint, so the card doesn't jump in size when switching. */
+.chat-map-detail-view {
+  display: none;
+  position: relative;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.chat-map-list-showing-detail .chat-map-list-header,
+.chat-map-list-showing-detail .chat-map-list-items {
+  display: none;
+}
+
+.chat-map-list-showing-detail .chat-map-detail-view {
+  display: flex;
+}
+
+.chat-map-detail-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 1;
+  width: 1.8rem;
+  height: 1.8rem;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--map-card-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+.chat-map-detail-photo {
+  flex-shrink: 0;
+  width: 100%;
+  height: 140px;
+  overflow: hidden;
+  background: var(--map-card-border);
+}
+
+.chat-map-detail-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.chat-map-detail-body {
+  padding: 0.9rem 1rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.chat-map-detail-title {
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--map-card-text);
+}
+
+.chat-map-detail-meta {
+  font-size: 0.85rem;
+  color: var(--map-card-text-muted);
+}
+
+.chat-map-detail-directions {
+  align-self: flex-start;
+  margin-top: 0.3rem;
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  background: var(--map-card-accent);
+  color: var(--map-card-accent-text);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: background-color 0.15s ease;
+}
+
+.chat-map-detail-directions:hover {
+  background: #000000;
+}
+
+.chat-map-detail-phone,
+.chat-map-detail-website {
+  font-size: 0.85rem;
+  color: var(--map-card-text);
+}
+
+.chat-map-detail-notes-label {
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--map-card-text-muted);
+}
+
+.chat-map-detail-notes {
+  font-size: 0.88rem;
+  color: var(--map-card-text);
+}
+
+.chat-map-detail-pager {
+  margin-top: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.8rem;
+  border-top: 1px solid var(--map-card-border);
+}
+
+.chat-map-detail-pager-label {
+  font-size: 0.82rem;
+  color: var(--map-card-text-muted);
+}
+
+.chat-map-detail-prev,
+.chat-map-detail-next {
+  width: 1.8rem;
+  height: 1.8rem;
+  border: none;
+  border-radius: 50%;
+  background: var(--map-card-hover);
+  color: var(--map-card-text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-map-detail-prev:disabled,
+.chat-map-detail-next:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+
 .chat-form {
   flex-shrink: 0;
   display: flex;
-  gap: 0.6rem;
-  padding: 1.25rem 0;
-  border-top: 1px solid var(--color-border);
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1rem 0 1.25rem;
+  padding: 0.4rem 0.4rem 0.4rem 1.1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+  background: var(--color-bg);
 }
 
 .chat-form input {
   flex: 1;
-  padding: 0.65rem 0.85rem;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-surface);
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 0.6rem 0;
   color: var(--color-text);
   font-size: 0.95rem;
 }
@@ -183,42 +673,77 @@ body {
 
 .chat-form input:focus {
   outline: none;
-  border-color: var(--color-accent);
-  background: var(--color-bg);
 }
 
-.chat-form button {
-  padding: 0.65rem 1.25rem;
+.chat-form-submit {
+  flex-shrink: 0;
+  width: 2.25rem;
+  height: 2.25rem;
   border: none;
-  border-radius: 10px;
+  border-radius: 50%;
   background: var(--color-accent);
   color: var(--color-accent-text);
+  font-size: 1.05rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  font-size: 0.95rem;
   transition: background-color 0.15s ease;
 }
 
-.chat-form button:hover:not(:disabled) {
+.chat-form-submit:hover:not(:disabled) {
   background: var(--color-accent-hover);
 }
 
-.chat-form button:disabled {
+.chat-form-submit:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.info-window-city {
-  margin: 0.15rem 0 0.35rem;
-  font-size: 0.85rem;
-  color: var(--color-text-muted);
-}
-
 @media (max-width: 700px) {
+  .chat-header {
+    display: flex;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 25% 0 0;
+    z-index: 20;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+  }
+
+  .app-layout.sidebar-open .sidebar {
+    transform: translateX(0);
+  }
+
+  .app-layout.sidebar-open::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 10;
+  }
+
   .chat-page {
     padding: 0 0.9rem;
   }
 
   .chat-map {
-    height: 260px;
+    height: 480px;
+  }
+
+  /* On narrow screens the floating card becomes a bottom sheet instead of a
+     top-right corner card, so it doesn't crowd out the map. */
+  .chat-map-list {
+    top: auto;
+    left: 0.5rem;
+    right: 0.5rem;
+    bottom: 0.5rem;
+    width: auto;
+    max-width: none;
+    max-height: 45%;
   }
 }

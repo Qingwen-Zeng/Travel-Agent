@@ -34,6 +34,7 @@ def test_fresh_path_creates_tables_and_index(tmp_path):
         "city_stories",
         "idx_city_stories_city",
         "idx_cities_country",
+        "spot_details",
     } <= names
 
 

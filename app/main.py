@@ -109,6 +109,15 @@ FAVORITE_EXAMPLES = [
 ]
 
 
+def _asset_version(*relative_paths: str) -> str:
+    """A cache-busting value derived from each file's last-modified time, so a browser
+    that aggressively caches /static/* (no Cache-Control header is set) is forced to
+    fetch the new version the moment any of these files actually change on disk."""
+    return "-".join(
+        str(int((BASE_DIR / "static" / name).stat().st_mtime)) for name in relative_paths
+    )
+
+
 @app.get("/")
 def index(request: Request, conn=Depends(get_db)):
     known_city_names = {row["name"] for row in list_cities(conn)}
@@ -122,6 +131,7 @@ def index(request: Request, conn=Depends(get_db)):
             "suggestion_chips": suggestion_chips,
             "google_maps_browser_key": settings.google_maps_browser_key,
             "google_maps_map_id": settings.google_maps_map_id,
+            "asset_version": _asset_version("app.js", "style.css"),
         },
     )
 
