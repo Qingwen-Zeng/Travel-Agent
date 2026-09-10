@@ -22,7 +22,7 @@ Copy `.env.example` to `.env` and fill in real values.
 | `LLM_MODEL` | Yes | e.g. `claude-sonnet-4-5`. |
 | `RATE_LIMIT_PER_HOUR` | No (default `10`) | Per-IP chat message cap, per hour. |
 | `DAILY_MESSAGE_CAP` | No (default `300`) | Site-wide chat message cap, per calendar day — the real ceiling, since it holds regardless of how many IPs appear. |
-| `GOOGLE_PLACES_API_KEY` | Only for the import script | Never loaded by the web app — see below. |
+| `GOOGLE_PLACES_API_KEY` | Only for the offline scripts | Never loaded by the web app — see below. |
 
 ## Google API keys
 
@@ -35,9 +35,10 @@ them up — each must be restricted to only its own API.
     local dev).
   - **API restrictions** → Maps JavaScript API only. It must not be able to call the Places
     API.
-- **`GOOGLE_PLACES_API_KEY`** — used only by `scripts/import_saved_places.py`, which runs
-  on your own machine, never on the server, and is never loaded by the web app (it isn't
-  even a field on `app.config.Settings`). Restrict it to the Places API only.
+- **`GOOGLE_PLACES_API_KEY`** — used only by the offline scripts (`import_saved_places.py`
+  for geocoding, `enrich_places.py` for ratings/contact info/photos), which run on your own
+  machine, never on the server, and is never loaded by the web app (it isn't even a field
+  on `app.config.Settings`). Restrict it to the Places API only.
 
 Also set an API **quota limit** (not just a billing alert — see "Spend limits" below) on the
 Maps JavaScript API, since the browser key is necessarily public.
@@ -64,6 +65,23 @@ titles/notes without a geocoding call, and removes spots no longer present in a 
 Files that don't follow the `{City} {Category}.csv` naming convention (generic lists like
 "Want to go", "Just Ok") are skipped entirely.
 
+## Post-import scripts
+
+Both run offline, are safe to re-run, and report (not abort on) rows they can't handle.
+
+```
+python scripts/assign_countries.py --db travel.db
+python scripts/enrich_places.py --db travel.db --photos-dir app/static/spot_photos
+```
+
+- **`assign_countries.py`** fills `cities.country` from a hand-curated name→country map
+  (the raw data has typo'd duplicates and country-as-city buckets, so it isn't
+  auto-inferable). Needed for country-level requests. No API key required.
+- **`enrich_places.py`** adds a rating, phone, website, and one photo per spot via the
+  Places API (New) Place Details, keyed off each spot's `place_id`. Photos are downloaded
+  once into `--photos-dir` and served by the app itself. Requires `GOOGLE_PLACES_API_KEY`;
+  spots already enriched are skipped, so re-runs only spend money on new spots.
+
 ## Personal diary RAG (get_city_context)
 
 The chat's `get_city_context` tool draws on personal travel diary entries (`stories.json`,
@@ -87,15 +105,18 @@ python -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.example .env   # then fill in real values
 .venv/bin/python scripts/import_saved_places.py   # builds travel.db from Saved/
+.venv/bin/python scripts/assign_countries.py      # fills cities.country
+.venv/bin/python scripts/enrich_places.py         # optional — ratings, contact info, photos
 .venv/bin/python scripts/import_stories.py        # optional — see "Personal diary RAG" below
 .venv/bin/python scripts/build_story_index.py     # optional
 .venv/bin/uvicorn app.main:app --reload
 ```
 
-Run the test suite (all tests run offline — no network calls, no real API keys needed):
+Run the test suite (all tests run offline — no network calls, no real API keys needed).
+Run it as a module from the repo root so `app` is importable:
 
 ```
-.venv/bin/pytest
+.venv/bin/python -m pytest
 ```
 
 ## Building and running the image

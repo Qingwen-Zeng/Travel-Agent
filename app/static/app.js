@@ -434,6 +434,10 @@
     }
     state.activeId = id;
     const log = document.getElementById("chat-log");
+    // When the current conversation is empty, showEmptyState() has parked the single
+    // #chat-form element inside #chat-log. Move it back out before wiping the log, or
+    // log.innerHTML = "" destroys it and the switch (and every later send) breaks.
+    document.querySelector(".chat-page").appendChild(document.getElementById("chat-form"));
     log.innerHTML = "";
     const convo = activeConversation();
     if (convo.transcript.length === 0) {
