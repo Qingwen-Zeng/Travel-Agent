@@ -37,6 +37,8 @@ CLAUDE.md
 CONTEXT.md
 DEPLOY.md
 SSH/
+Context/
+Workflow Diagram/
 
 # --- Project data (built offline, never committed) ---
 # Raw Google Maps "Saved lists" CSV export
