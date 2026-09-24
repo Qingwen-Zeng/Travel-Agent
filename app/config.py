@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -21,6 +22,8 @@ class Settings:
     llm_model: str
     rate_limit_per_hour: int
     daily_message_cap: int
+    langsmith_api_key: Optional[str]
+    langsmith_project: str
 
 
 def load_settings() -> Settings:
@@ -39,8 +42,19 @@ def load_settings() -> Settings:
         llm_model=os.environ["LLM_MODEL"],
         rate_limit_per_hour=int(os.environ.get("RATE_LIMIT_PER_HOUR", "10")),
         daily_message_cap=int(os.environ.get("DAILY_MESSAGE_CAP", "300")),
+        langsmith_api_key=os.environ.get("LANGSMITH_API_KEY") or None,
+        langsmith_project=os.environ.get("LANGSMITH_PROJECT", "travel-agent"),
     )
 
 
 load_dotenv()
 settings = load_settings()
+
+# Tracing is on whenever a key is configured — no separate opt-in toggle. The
+# LangSmith SDK reads these itself from the environment (inside wrap_anthropic /
+# @traceable in app/llm.py, app/chat.py, app/rag.py), so this is the one place
+# that translates "a key is present" into the SDK's own on/off switch.
+# setdefault, not direct assignment, so a real deployment env var still wins.
+if settings.langsmith_api_key:
+    os.environ.setdefault("LANGSMITH_TRACING", "true")
+    os.environ.setdefault("LANGSMITH_PROJECT", settings.langsmith_project)

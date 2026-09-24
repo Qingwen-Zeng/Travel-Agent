@@ -2,11 +2,17 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
+from langchain_core.messages import SystemMessage
 
 from app.db import get_readonly_connection, get_writable_connection
 from app.limits import DailyMessageCap, PerIPRateLimiter
-from app.llm import LLMResponse, ToolCall
-from app.main import app, get_daily_cap, get_db, get_llm_client, get_per_ip_limiter
+from app.main import app, get_daily_cap, get_db, get_model, get_per_ip_limiter
+from tests.fakes import (
+    BindableFakeModel,
+    CountingFakeModel,
+    text_response as _text_response,
+    tool_call_response as _tool_call_response,
+)
 
 
 def _seed_db(path):
@@ -133,19 +139,9 @@ def test_api_city_unknown_returns_404(client):
     assert response.status_code == 404
 
 
-class StubClient:
-    def __init__(self, responses):
-        self._responses = list(responses)
-        self.calls = []
-
-    def send(self, *, system, messages, tools):
-        self.calls.append({"system": system, "messages": messages, "tools": tools})
-        return self._responses.pop(0)
-
-
 def test_chat_without_tool_call_returns_text_only(client):
-    stub = StubClient([LLMResponse(text="General travel advice.", tool_call=None)])
-    app.dependency_overrides[get_llm_client] = lambda: stub
+    fake = BindableFakeModel(responses=[_text_response("General travel advice.")])
+    app.dependency_overrides[get_model] = lambda: fake
 
     response = client.post("/api/chat", json={"message": "what's your favorite season?", "history": []})
 
@@ -156,16 +152,13 @@ def test_chat_without_tool_call_returns_text_only(client):
 
 
 def test_chat_with_tool_call_returns_text_and_map(client):
-    stub = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(name="show_city_map", input={"city": "Zurich"}, id="toolu_1"),
-            ),
-            LLMResponse(text="Here's what's saved in Zurich.", tool_call=None),
+    fake = BindableFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "Zurich"}),
+            _text_response("Here's what's saved in Zurich."),
         ]
     )
-    app.dependency_overrides[get_llm_client] = lambda: stub
+    app.dependency_overrides[get_model] = lambda: fake
 
     response = client.post("/api/chat", json={"message": "what's good in zurich?", "history": []})
 
@@ -178,51 +171,48 @@ def test_chat_with_tool_call_returns_text_and_map(client):
 
 
 def test_chat_tool_definition_is_constrained_to_real_city_and_category_enum(client):
-    stub = StubClient([LLMResponse(text="ok", tool_call=None)])
-    app.dependency_overrides[get_llm_client] = lambda: stub
+    fake = BindableFakeModel(responses=[_text_response("ok")])
+    app.dependency_overrides[get_model] = lambda: fake
 
     client.post("/api/chat", json={"message": "hi", "history": []})
 
-    tools_sent = stub.calls[0]["tools"]
+    tools_sent = fake.bound_tools
     assert len(tools_sent) == 2
-    map_tool = next(t for t in tools_sent if t["name"] == "show_city_map")
-    context_tool = next(t for t in tools_sent if t["name"] == "get_city_context")
+    map_tool = next(t for t in tools_sent if t.name == "show_city_map")
+    context_tool = next(t for t in tools_sent if t.name == "get_city_context")
 
-    city_enum = map_tool["input_schema"]["properties"]["city"]["enum"]
+    schema = map_tool.args_schema.model_json_schema()
+    city_enum = schema["properties"]["city"]["anyOf"][0]["enum"]
     assert set(city_enum) == {"Zurich", "Barcelona"}
-    category_enum = map_tool["input_schema"]["properties"]["categories"]["items"]["enum"]
+    category_enum = schema["properties"]["categories"]["anyOf"][0]["items"]["enum"]
     assert set(category_enum) == {"Park", "Cafe"}
-    assert map_tool["input_schema"]["properties"]["search_query"]["type"] == "string"
-    assert context_tool["input_schema"]["properties"]["query"]["type"] == "string"
+    assert schema["properties"]["search_query"]["anyOf"][0]["type"] == "string"
+
+    context_schema = context_tool.args_schema.model_json_schema()
+    assert context_schema["properties"]["query"]["type"] == "string"
 
 
 def test_chat_system_prompt_includes_zurich_category_breakdown(client):
-    stub = StubClient([LLMResponse(text="ok", tool_call=None)])
-    app.dependency_overrides[get_llm_client] = lambda: stub
+    fake = CountingFakeModel(responses=[_text_response("ok")])
+    app.dependency_overrides[get_model] = lambda: fake
 
     client.post("/api/chat", json={"message": "hi", "history": []})
 
-    system = stub.calls[0]["system"]
+    system_message = next(m for m in fake.calls[0] if isinstance(m, SystemMessage))
+    system = system_message.content
     assert "Zurich" in system
     assert "Park (1)" in system
     assert "Cafe (1)" in system
 
 
 def test_chat_with_categories_filters_map_to_those_categories(client):
-    stub = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="show_city_map",
-                    input={"city": "Zurich", "categories": ["Cafe"]},
-                    id="toolu_1",
-                ),
-            ),
-            LLMResponse(text="Here's the cafe.", tool_call=None),
+    fake = BindableFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "Zurich", "categories": ["Cafe"]}),
+            _text_response("Here's the cafe."),
         ]
     )
-    app.dependency_overrides[get_llm_client] = lambda: stub
+    app.dependency_overrides[get_model] = lambda: fake
 
     response = client.post("/api/chat", json={"message": "just cafes", "history": []})
 
@@ -232,8 +222,8 @@ def test_chat_with_categories_filters_map_to_those_categories(client):
 
 
 def test_chat_history_round_trips_through_request(client):
-    stub = StubClient([LLMResponse(text="ok", tool_call=None)])
-    app.dependency_overrides[get_llm_client] = lambda: stub
+    fake = CountingFakeModel(responses=[_text_response("ok")])
+    app.dependency_overrides[get_model] = lambda: fake
 
     history = [
         {"role": "user", "content": "earlier question"},
@@ -242,21 +232,11 @@ def test_chat_history_round_trips_through_request(client):
     response = client.post("/api/chat", json={"message": "follow up", "history": history})
 
     assert response.status_code == 200
-    sent_messages = stub.calls[0]["messages"]
-    assert sent_messages[0] == {"role": "user", "content": "earlier question"}
-    assert sent_messages[1] == {"role": "assistant", "content": "earlier answer"}
-    assert sent_messages[2] == {"role": "user", "content": "follow up"}
-
-
-class StubStreamClient:
-    def __init__(self, streams):
-        self._streams = list(streams)
-        self.calls = []
-
-    def stream(self, *, system, messages, tools):
-        self.calls.append({"system": system, "messages": messages, "tools": tools})
-        for event in self._streams.pop(0):
-            yield event
+    # index 0 is the SystemMessage app/chat.py prepends.
+    sent_messages = fake.calls[0]
+    assert sent_messages[1].content == "earlier question"
+    assert sent_messages[2].content == "earlier answer"
+    assert sent_messages[3].content == "follow up"
 
 
 def _parse_sse(text):
@@ -269,65 +249,43 @@ def _parse_sse(text):
 
 
 def test_chat_stream_no_tool_call_yields_delta_and_done_events(client):
-    stub = StubStreamClient(
-        [
-            [
-                ("delta", "Hello"),
-                ("delta", " there"),
-                ("done", LLMResponse(text="Hello there", tool_call=None)),
-            ]
-        ]
-    )
-    app.dependency_overrides[get_llm_client] = lambda: stub
+    fake = BindableFakeModel(responses=[_text_response("Hello there")])
+    app.dependency_overrides[get_model] = lambda: fake
 
     response = client.get("/api/chat/stream", params={"message": "hi", "history": "[]"})
 
     assert response.status_code == 200
     events = _parse_sse(response.text)
-    assert events == [
-        {"type": "delta", "text": "Hello"},
-        {"type": "delta", "text": " there"},
-        {"type": "done"},
-    ]
+    delta_text = "".join(e["text"] for e in events if e["type"] == "delta")
+    assert delta_text == "Hello there"
+    assert events[-1] == {"type": "done"}
 
 
 def test_chat_stream_tool_call_yields_deltas_map_then_done(client):
-    stub = StubStreamClient(
-        [
-            [
-                (
-                    "done",
-                    LLMResponse(
-                        text="",
-                        tool_call=ToolCall(
-                            name="show_city_map", input={"city": "Zurich"}, id="toolu_1"
-                        ),
-                    ),
-                )
-            ],
-            [
-                ("delta", "Here's Zurich."),
-                ("done", LLMResponse(text="Here's Zurich.", tool_call=None)),
-            ],
+    fake = BindableFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "Zurich"}),
+            _text_response("Here's Zurich."),
         ]
     )
-    app.dependency_overrides[get_llm_client] = lambda: stub
+    app.dependency_overrides[get_model] = lambda: fake
 
     response = client.get("/api/chat/stream", params={"message": "zurich?", "history": "[]"})
 
     assert response.status_code == 200
     events = _parse_sse(response.text)
-    assert events[0] == {"type": "delta", "text": "Here's Zurich."}
-    assert events[1]["type"] == "map"
-    assert events[1]["map"]["city"] == "Zurich"
-    titles = {marker["title"] for marker in events[1]["map"]["markers"]}
+    delta_text = "".join(e["text"] for e in events if e["type"] == "delta")
+    assert delta_text == "Here's Zurich."
+    map_event = next(e for e in events if e["type"] == "map")
+    assert map_event["map"]["city"] == "Zurich"
+    titles = {marker["title"] for marker in map_event["map"]["markers"]}
     assert titles == {"Botanical Garden", "Aardvark Cafe"}
-    assert events[2] == {"type": "done"}
+    assert events[-1] == {"type": "done"}
 
 
 def test_chat_stream_history_round_trips_through_query_param(client):
-    stub = StubStreamClient([[("done", LLMResponse(text="ok", tool_call=None))]])
-    app.dependency_overrides[get_llm_client] = lambda: stub
+    fake = CountingFakeModel(responses=[_text_response("ok")])
+    app.dependency_overrides[get_model] = lambda: fake
 
     history = json.dumps(
         [
@@ -338,15 +296,15 @@ def test_chat_stream_history_round_trips_through_query_param(client):
     response = client.get("/api/chat/stream", params={"message": "follow up", "history": history})
 
     assert response.status_code == 200
-    sent_messages = stub.calls[0]["messages"]
-    assert sent_messages[0] == {"role": "user", "content": "earlier question"}
-    assert sent_messages[1] == {"role": "assistant", "content": "earlier answer"}
-    assert sent_messages[2] == {"role": "user", "content": "follow up"}
+    sent_messages = fake.calls[0]
+    assert sent_messages[1].content == "earlier question"
+    assert sent_messages[2].content == "earlier answer"
+    assert sent_messages[3].content == "follow up"
 
 
 def test_per_ip_limit_rejects_after_threshold_and_resets_after_window(client):
-    stub = StubClient([LLMResponse(text="ok", tool_call=None) for _ in range(10)])
-    app.dependency_overrides[get_llm_client] = lambda: stub
+    fake = BindableFakeModel(responses=[_text_response("ok") for _ in range(10)])
+    app.dependency_overrides[get_model] = lambda: fake
     clock = {"now": 0.0}
     shared_limiter = PerIPRateLimiter(limit=2, window_seconds=3600, clock=lambda: clock["now"])
     app.dependency_overrides[get_per_ip_limiter] = lambda: shared_limiter
@@ -370,8 +328,8 @@ def test_per_ip_limit_rejects_after_threshold_and_resets_after_window(client):
 
 
 def test_daily_cap_rejects_once_reached(client):
-    stub = StubClient([LLMResponse(text="ok", tool_call=None) for _ in range(10)])
-    app.dependency_overrides[get_llm_client] = lambda: stub
+    fake = BindableFakeModel(responses=[_text_response("ok") for _ in range(10)])
+    app.dependency_overrides[get_model] = lambda: fake
     shared_cap = DailyMessageCap(limit=2)
     app.dependency_overrides[get_daily_cap] = lambda: shared_cap
 
@@ -387,8 +345,8 @@ def test_daily_cap_rejects_once_reached(client):
 
 def test_city_and_map_endpoints_unaffected_by_chat_cap(client):
     app.dependency_overrides[get_daily_cap] = lambda: DailyMessageCap(limit=0)
-    stub = StubClient([LLMResponse(text="ok", tool_call=None)])
-    app.dependency_overrides[get_llm_client] = lambda: stub
+    fake = BindableFakeModel(responses=[_text_response("ok")])
+    app.dependency_overrides[get_model] = lambda: fake
 
     capped = client.post("/api/chat", json={"message": "hi", "history": []})
     assert "message limit" in capped.json()["text"].lower()
@@ -403,8 +361,8 @@ def test_city_and_map_endpoints_unaffected_by_chat_cap(client):
 
 def test_chat_stream_capped_message_sent_as_normal_sse_reply(client):
     app.dependency_overrides[get_daily_cap] = lambda: DailyMessageCap(limit=0)
-    stub = StubStreamClient([[("done", LLMResponse(text="unused", tool_call=None))]])
-    app.dependency_overrides[get_llm_client] = lambda: stub
+    fake = CountingFakeModel(responses=[_text_response("unused")])
+    app.dependency_overrides[get_model] = lambda: fake
 
     response = client.get("/api/chat/stream", params={"message": "hi", "history": "[]"})
 
@@ -413,4 +371,4 @@ def test_chat_stream_capped_message_sent_as_normal_sse_reply(client):
     assert events[0]["type"] == "delta"
     assert "message limit" in events[0]["text"].lower()
     assert events[1] == {"type": "done"}
-    assert len(stub.calls) == 0  # capped before the model was ever called
+    assert len(fake.calls) == 0  # capped before the model was ever called

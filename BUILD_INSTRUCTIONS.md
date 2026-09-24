@@ -35,13 +35,13 @@ The reply is prose **plus** an interactive Google Map with those spots pinned on
 | Language | Python 3.11+ |
 | Web framework | FastAPI + Uvicorn |
 | Templating | Jinja2 |
-| Frontend interactivity | HTMX + vanilla JS. **No Node, no build step, no React.** |
+| Frontend interactivity | Hand-written vanilla JS (one file, `app.js`). **No Node, no build step, no framework — not even HTMX**, which was in the original plan but turned out unnecessary once the chat page needed real client-side state (streaming, a multi-conversation sidebar) that a hypermedia library doesn't help with. |
 | Database | SQLite (WAL mode) |
 | Map | Google Maps JavaScript API with Advanced Markers |
-| Geocoding | Google Places API (New) Text Search — **import time only** |
-| AI | One LLM API with tool calling |
+| Geocoding & place data | Google Places API (New) — Text Search at import time for coordinates (Step 3), Place Details + Photo Media later, offline, for ratings/contact/photos (Step 16) |
+| AI | One LLM API (Anthropic) with tool calling |
 | Semantic retrieval | FAISS (local index) + `sentence-transformers` (local embeddings) |
-| Rate limiting | `slowapi` or equivalent |
+| Rate limiting | Hand-rolled in-process limiters (`app/limits.py`) — no third-party rate-limiting library was needed |
 | Deployment | Docker image → VPS behind Caddy |
 
 **Do not add:** Postgres, PostGIS, Redis, Celery, React, an ORM, user accounts, an upload
@@ -56,6 +56,14 @@ personal travel diary entries (`stories.json`). See Step 13 for how it's built �
 embedding index (FAISS + a local sentence-transformers model), not just a direct city-keyed
 lookup, kept in a separate tool from `show_city_map` so it never implies a map and works even
 for cities with no saved spots at all.
+
+**Steps 16–19 were likewise not part of the original plan.** They document real
+enhancements added after Step 15 shipped: enriching spots with real ratings/contact
+info/photos (Step 16), redesigning the map's UI around that richer data (Step 17), an
+ephemeral multi-conversation sidebar (Step 18), and clickable spot names in replies
+(Step 19). They follow the same "Goal / Files / Requirements / Acceptance tests / Done
+when" shape as every other step, added at the end rather than renumbering the steps
+before them.
 
 ---
 
@@ -72,8 +80,8 @@ travel-agent/
 │   ├── queries.py           all SQL reads
 │   ├── maps.py              map payload construction
 │   ├── geo.py               haversine distance + radius filtering
-│   ├── llm.py               LLM client + tool definitions
-│   ├── chat.py              chat orchestration
+│   ├── llm.py               LLM client + tool definitions + system prompt
+│   ├── chat.py              chat orchestration (the agent loop)
 │   ├── rag.py               story embedding + FAISS index build/search
 │   ├── limits.py            rate limiting
 │   ├── main.py              FastAPI app, routes
@@ -81,24 +89,33 @@ travel-agent/
 │   │   └── index.html
 │   └── static/
 │       ├── app.js
-│       └── style.css
+│       ├── style.css
+│       └── spot_photos/     downloaded place photos (Step 16, git-ignored)
 ├── scripts/
-│   ├── import_saved_places.py  offline Saved/ export → SQLite
-│   ├── import_stories.py       offline stories.json → city_stories table
-│   ├── build_story_index.py    city_stories → FAISS index file
-│   └── assign_countries.py     hand-curated city → country mapping
+│   ├── import_saved_places.py  offline Saved/ export → SQLite (Step 3)
+│   ├── assign_countries.py     hand-curated city → country mapping (Step 14)
+│   ├── enrich_places.py        offline ratings/contact/photos → spot_details (Step 16)
+│   ├── import_stories.py       offline stories.json → city_stories table (Step 13)
+│   └── build_story_index.py    city_stories → FAISS index file (Step 13)
 ├── Saved/                    owner's Google Maps "Saved lists" export, one CSV per
 │                              city+category (git-ignored)
 ├── stories.json               owner's personal travel diary entries (git-ignored)
 ├── tests/
+│   ├── conftest.py
+│   ├── test_config.py
+│   ├── test_db.py
 │   ├── test_import_saved_places.py
-│   ├── test_import_stories.py
 │   ├── test_assign_countries.py
+│   ├── test_enrich_places.py
+│   ├── test_import_stories.py
 │   ├── test_queries.py
 │   ├── test_maps.py
 │   ├── test_geo.py
 │   ├── test_rag.py
-│   └── test_chat.py
+│   ├── test_llm.py
+│   ├── test_chat.py
+│   ├── test_limits.py
+│   └── test_main.py
 ├── Dockerfile
 ├── Caddyfile
 ├── requirements.txt
@@ -130,7 +147,9 @@ Every step below states its acceptance tests. Those are the minimum, not the max
 ### Requirements
 
 `requirements.txt` pins: `fastapi`, `uvicorn[standard]`, `jinja2`, `python-dotenv`,
-`requests`, `slowapi`, the LLM provider SDK, and `pytest`.
+`requests`, `anthropic` (the LLM provider SDK), and `pytest`. (No rate-limiting
+library — Step 11's limiters are hand-rolled. `faiss-cpu` and `sentence-transformers`
+are added later, in Step 13, only once semantic retrieval exists.)
 
 ### Configuration
 
@@ -146,9 +165,11 @@ setting is required except where a default is given.
 | `LLM_MODEL` | model identifier |
 | `RATE_LIMIT_PER_HOUR` | per-IP message cap (default 10) |
 | `DAILY_MESSAGE_CAP` | site-wide message cap per day (default 300) |
+| `STORY_INDEX_PATH` | path to the FAISS index file (default `stories.faiss`) — added in Step 13, not part of the initial skeleton |
 
-`GOOGLE_PLACES_API_KEY` is **not** in this list. It belongs to the import script only and
-must never be loaded by the web application.
+`GOOGLE_PLACES_API_KEY` is **not** in this list. It belongs to the offline scripts only
+(Step 3's importer, and Step 16's enrichment script) and must never be loaded by the web
+application.
 
 `.gitignore` must exclude `Saved/`, `*.db`, `.env`, and `__pycache__/`.
 
@@ -556,6 +577,12 @@ Step 9 reuses for every inline chat map.
 
 ### Map rendering
 
+**The info-window design below is superseded by Step 17.** It shipped and worked, but was
+later replaced by a rating-badge marker + a floating list/detail card (no info windows at
+all) once real per-spot data (rating, photo, phone, website) existed to show. This section
+is kept because the underlying loading, framing, and "never concatenate into HTML" rules it
+establishes still hold — only the marker's `content` and the click target changed.
+
 Load the Maps JavaScript API with the browser key and the `maps` and `marker` libraries.
 
 Requirements:
@@ -750,10 +777,14 @@ Use a stub LLM client throughout — no test may make a network call.
 
 ### Page
 
-The entire page is a single AI chat interface — no sidebar, no separate map-browsing view.
-One centered column: a light header, a scrollable chat log, and a message input pinned to
-the bottom. Styled like a general-purpose LLM chat UI (e.g. Claude.ai): user messages as
-right-aligned bubbles, assistant replies as plain left-aligned text with no bubble chrome.
+The entire page is a single AI chat interface, not a separate map-browsing view: a
+centered column with a scrollable chat log and a message input pinned to the bottom.
+Styled like a general-purpose LLM chat UI (e.g. Claude.ai): user messages as right-aligned
+bubbles, assistant replies as plain left-aligned text with no bubble chrome.
+
+**No sidebar yet at this step** — that's Step 18, added later, once conversations needed
+to be switchable. Once Step 18 ships, this centered column is what sits *beside* the
+sidebar, not the whole page.
 
 On first load, before any message is sent, show a brief greeting plus one clickable
 suggestion chip per saved city (e.g. "What's good in Zurich?"), built from the real city
@@ -864,7 +895,12 @@ genuine RAG, since the corpus (275+ entries) is real retrieval material, not som
 small enough to always sit in the prompt like the saved spots are.
 
 **Files:** `app/db.py`, `app/rag.py`, `app/llm.py`, `app/chat.py`, `app/main.py`,
-`app/config.py`, `scripts/import_stories.py`, `scripts/build_story_index.py`
+`app/config.py`, `scripts/import_stories.py`, `scripts/build_story_index.py`,
+`requirements.txt`
+
+Adds `faiss-cpu` and `sentence-transformers` to `requirements.txt` (not needed before
+this step) and a new `STORY_INDEX_PATH` setting to `app/config.py` (default
+`stories.faiss`) pointing at the built index file.
 
 ### Storage
 
@@ -1059,6 +1095,230 @@ never emits coordinates" — bounded specifically to filtering, never to plottin
 
 ---
 
+# Step 16 — Place enrichment (ratings, contact info, photos)
+
+**Goal:** add real Google Place data to already-imported spots, so the map and detail view
+can show more than a name and the owner's personal note.
+
+**Files:** `app/db.py`, `app/queries.py`, `app/maps.py`, `scripts/enrich_places.py`,
+`tests/test_enrich_places.py`, `tests/test_maps.py`, `tests/test_queries.py`
+
+### Storage
+
+`spot_details(spot_id INTEGER PRIMARY KEY REFERENCES spots(id) ON DELETE CASCADE, rating
+REAL, review_count INTEGER, phone TEXT, website TEXT, photo_path TEXT)` — an optional,
+1:1 row per spot. A spot with no row simply has no enrichment; it must never be excluded
+from any query or rendering path because of that.
+
+### The script
+
+`scripts/enrich_places.py` runs offline, on the owner's machine, using each spot's
+`place_id` already captured at import time (Step 3) — the web application never calls
+this API itself. Two Google Places API (New) endpoints:
+
+- **Place Details** — field mask `rating,nationalPhoneNumber,websiteUri,photos`.
+  Deliberately **no review count** in the mask: the detail view shows the owner's own
+  saved note instead of anything review-related, so there's no reason to pay for or store
+  it beyond the raw column.
+- **Photo Media** — downloads **one** photo per spot, saved once to
+  `app/static/spot_photos/{spot_id}.jpg` and never re-fetched at request time (same
+  principle as "no geocoding call at request time").
+
+Same retry/backoff pattern as Step 3's geocoder (3 attempts), and the same
+dependency-injection structure (`DetailsFetcher`/`PhotoDownloader` protocols, real Google
+classes in production, fakes in tests — nothing in the test suite touches the network).
+**Idempotent by skipping:** a spot that already has a `spot_details` row is skipped, so
+re-running after adding new saved spots only spends money on the new ones. A spot with no
+`place_id`, or whose Place Details request fails, is skipped and reported — same
+skip-and-report philosophy as every other import script, never aborts the run.
+
+```
+python scripts/enrich_places.py [--db travel.db] [--photos-dir app/static/spot_photos]
+```
+
+Exit codes: `0` success (even with spots skipped), `2` `GOOGLE_PLACES_API_KEY` not set.
+
+### Query layer and map payload
+
+Every spot-fetching function in `app/queries.py` (`get_city_spots`, `_by_categories`,
+`get_country_spots`, `_by_categories`, `search_city_spots`) `LEFT JOIN`s `spot_details` —
+never a plain `JOIN` — so an un-enriched spot still comes back, with those columns `NULL`.
+`build_map_payload` (`app/maps.py`) includes `rating`/`phone`/`website` on a marker only
+when the row has that column **and** it is non-`NULL`; `photo_path` becomes a
+`/static/spot_photos/...` URL. **`review_count` is never included in the payload at all**
+— it is stored but deliberately never surfaced to the frontend or the model.
+
+### Acceptance tests
+
+- `run_enrich` writes rating/phone/website from a fake details fetcher.
+- `run_enrich` downloads and saves a photo when the details response includes one,
+  writing the correct `photo_path`.
+- A spot with no `place_id`, or a failed Place Details fetch, is skipped and reported, not
+  aborted.
+- Re-running is idempotent: a spot already enriched is skipped, and the fetcher is not
+  called again for it.
+- `build_map_payload` includes `rating`/`phone`/`website`/`photo_url` only when present
+  and non-null, and never includes `review_count`.
+- Every query function still returns an un-enriched spot (via `LEFT JOIN`), just with
+  those fields absent.
+
+### Done when
+
+Running the script against the real database with a real key enriches every resolvable
+spot without touching un-enriched ones on a later run. (Done for real this session: 1,342
+of 1,342 spots enriched, 1,340 with a photo, 0 already done on the first run.)
+
+---
+
+# Step 17 — Redesigned map UI: spot list + detail card
+
+**Goal:** replace the Step 6 pin-and-info-window design with a richer list/detail UI, now
+that Step 16 provides real per-spot data worth showing.
+
+**Files:** `app/static/app.js`, `app/static/style.css`
+
+### Design
+
+- Markers become small rating-badge buttons (`AdvancedMarkerElement` with a styled
+  `<button>` as `content`) — the spot's real rating when enriched, else its 1-based
+  position in the list as a fallback. No more info windows.
+- A card floats over the map (not a sidebar splitting its space) with two states:
+  - **List** — a scrollable row per spot: photo thumbnail (or a badge fallback), title, a
+    rating/category/city meta line, and a truncated note.
+  - **Detail** — one spot's photo, title, rating, a **Directions** link (the *only*
+    actionable link that leaves the page, built from that spot's own coordinates), and
+    phone/website/notes shown as **plain read-only text** — never `tel:`/`href` links —
+    plus a prev/next pager through the rest of the list.
+- The card can collapse to just its header, so the map underneath is visible.
+- Selecting a spot — its marker badge or its list row — opens its detail view in place and
+  pans/zooms the map to it; a close ("✕") button returns to the list.
+- Still **one shared renderer** (`renderMapPayload`) used everywhere a map is drawn — the
+  "do not write a second renderer" rule from Steps 6/9 is unchanged; this step replaced
+  the renderer's internals, not that principle.
+
+### Acceptance tests
+
+Frontend UI, verified manually (as Steps 6 and 9 were):
+
+- A marker's badge shows the real rating (one decimal place) when enriched, else its list
+  position.
+- Clicking a marker or its list row opens that spot's detail view and highlights it in
+  both places at once.
+- The Directions link always points at that spot's own coordinates.
+- Phone, website, and notes render as plain text — clicking them does not dial, browse, or
+  navigate away.
+- A spot with no photo shows no photo area, not a broken image.
+
+### Done when
+
+Every spot in a rendered map is reachable from the list, its detail view shows exactly the
+fields that exist for it, and Directions always resolves to that spot's real position.
+
+---
+
+# Step 18 — Multi-conversation sidebar (ephemeral, session-only)
+
+**Goal:** let a visitor start a new conversation without losing the previous one — a
+"New chat" button plus a sidebar of past conversations, Claude-web-app style — while
+keeping the server exactly as stateless as before.
+
+**Files:** `app/templates/index.html`, `app/static/app.js`, `app/static/style.css`
+
+### Design
+
+- A sidebar (`<nav>`) lists conversations from the current browser tab; the Step 9 chat
+  column now sits beside it, not alone on the page.
+- **All state is one in-memory JS object** — `state = { conversations: [], activeId: null
+  }`, each conversation `{ id, title, history, transcript }`. **No `sessionStorage`, no
+  `localStorage`, no cookie, and no server involvement of any kind** — a refresh or tab
+  close wipes every conversation. (`sessionStorage` was considered and rejected: it
+  survives a page refresh, which doesn't match "gone on refresh too" — a plain JS variable
+  is the correct, simpler tool.) This keeps the server precisely as stateless as Step 8
+  established: it still only ever sees one message + history per request, with zero
+  memory of its own.
+- `history` is the same flat `{role, content}` array already sent to `/api/chat/stream` —
+  unchanged shape, now one per conversation instead of one global. `transcript` is a
+  richer ordered list (`{type: "user"|"assistant"|"map", ...}`) that lets a past
+  conversation be fully replayed — bubbles and maps — through the same rendering
+  functions used live, without keeping every past conversation's DOM/map instances alive
+  simultaneously.
+- Switching conversations replaces `#chat-log`'s contents by replaying the target
+  conversation's `transcript`. The single `#chat-form` input element is *physically moved*
+  between two positions (parked near the empty-state greeting vs. pinned to the bottom of
+  the chat column) rather than cloned, so it keeps its event listeners. **It must be moved
+  to safety before the log is cleared** — clearing an empty conversation's log while the
+  form is still parked inside it destroys the form and breaks the switch. (This was a real
+  bug: switching away from an empty "New chat" back to an older conversation silently broke
+  the whole page. Fixed by rescuing the form out of the log first.)
+- The sidebar is disabled while a message is streaming, so switching conversations mid-reply
+  can't misdirect incoming stream events into the wrong now-visible conversation.
+- Map instances are keyed by canvas element in a `WeakMap`, not a `Map` — switching
+  conversations discards and rebuilds canvas elements, and a `WeakMap` lets old map
+  instances be garbage-collected instead of accumulating for the life of the page.
+
+### Acceptance tests
+
+Frontend UI, verified manually:
+
+- Starting a new chat preserves the previous conversation in the sidebar, fully restored
+  (bubbles and any map) when reopened.
+- A hard refresh wipes every conversation back to empty.
+- Switching away from an **empty** conversation to one with messages, and back, never
+  breaks the page or loses the input bar (the regression above, now guarded against).
+- A conversation with a map re-renders that map correctly after switching away and back.
+- The sidebar and "New chat" button are disabled during an in-flight reply.
+
+### Done when
+
+The sidebar accurately reflects every conversation created in the session, switching
+between any two conversations (empty or not, with or without maps) never breaks the page,
+and nothing about any conversation survives a refresh.
+
+---
+
+# Step 19 — Clickable spot names in replies
+
+**Goal:** when a reply mentions a saved spot by name, let the visitor click that name to
+jump straight to its detail view on the map below — without a second tool round-trip.
+
+**Files:** `app/static/app.js`
+
+### Design
+
+Purely a frontend feature. It runs after a reply's text and its map payload are both
+already known, matching against spot titles already present in that same map's marker
+list — it introduces **no new tool and no backend change**, and does not touch the "LLM
+never emits coordinates" boundary at all, since it never asks the model for a spot's
+identity or position.
+
+- For each spot in the reply's map, the **first** case-insensitive occurrence of its title
+  in the rendered reply text is wrapped in a clickable element, found via a `TreeWalker`
+  over text nodes so the existing Markdown-rendered structure (`<strong>`/`<em>`/`<code>`)
+  is left undisturbed.
+- Longest titles are matched first, so a shorter spot's name that is a substring of a
+  longer one already linked (e.g. "Bar" inside "Wine Bar") is correctly left alone.
+- Clicking it scrolls to that reply's map (if off-screen) and opens that spot's detail
+  view — the same result as clicking it in the map's own list — via a reference the map
+  renderer exposes on its container element.
+- Works identically for a live streaming reply and for a past conversation replayed from
+  the Step 18 sidebar.
+
+### Acceptance tests
+
+Frontend UI, verified manually:
+
+- The first mention of a spot's name in a reply is clickable; later mentions of the same
+  name are not.
+- Clicking it opens the correct spot's detail view, never a different one.
+- A spot name that is a substring of another spot's name is not double-linked.
+
+### Done when
+
+Every spot named in a reply that also has a map is clickable exactly once, and clicking it
+always opens that same spot's detail view.
+
+---
+
 ## Verification checklist
 
 Confirm each before considering the project complete.
@@ -1084,4 +1344,19 @@ Confirm each before considering the project complete.
 - [ ] `stories.json` and `stories.faiss` are git-ignored, never committed.
 - [ ] A country-level request never produces an empty-marker map falling back to the
       whole-world default view — the frontend treats zero markers as no map at all.
+- [ ] `GOOGLE_PLACES_API_KEY` is used only by the two offline scripts (import, enrich),
+      never by the web application.
+- [ ] A spot with no `spot_details` row still renders correctly everywhere (query results,
+      map markers, list, detail view) — enrichment is additive, never required.
+- [ ] `review_count` is stored in `spot_details` but never appears in a map payload or a
+      tool result sent to the model.
+- [ ] Phone, website, and personal notes in the detail view are plain text — no `tel:` or
+      `href` links, no way to trigger a call or page navigation from them.
+- [ ] Conversations in the sidebar are never persisted anywhere — no `sessionStorage`,
+      `localStorage`, cookie, or server-side store; a refresh wipes all of them.
+- [ ] Switching away from an empty conversation never breaks the page or destroys the
+      chat input (the singleton `#chat-form` is moved to safety before `#chat-log` is
+      cleared).
+- [ ] Clickable spot names in replies only ever reference spots already present in an
+      already-rendered map payload — they introduce no new coordinate source.
 - [ ] The full test suite passes with no network access.

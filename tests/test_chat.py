@@ -1,40 +1,22 @@
 import json
 
-import numpy as np
+from langchain_core.messages import HumanMessage, ToolMessage
 
+from app.agent import build_get_city_context_tool, build_show_city_map_tool
 from app.chat import handle_message, stream_message
 from app.db import get_writable_connection
-from app.llm import LLMResponse, ToolCall
 from app.rag import build_index
+from tests.fakes import (
+    BindableFakeModel,
+    CountingFakeModel,
+    FakeEmbedder,
+    text_response as _text_response,
+    tool_call_response as _tool_call_response,
+)
 
 
-class FakeEmbedder:
-    def __init__(self, vectors: dict[str, list[float]]):
-        self._vectors = vectors
-
-    def embed(self, texts: list[str]) -> np.ndarray:
-        return np.array([self._vectors[t] for t in texts], dtype="float32")
-
-
-class StubClient:
-    def __init__(self, responses):
-        self._responses = list(responses)
-        self.calls = []
-
-    def send(self, *, system, messages, tools):
-        self.calls.append({"system": system, "messages": messages, "tools": tools})
-        return self._responses.pop(0)
-
-
-class StubStreamClient:
-    def __init__(self, streams):
-        self._streams = list(streams)
-        self.calls = []
-
-    def stream(self, *, system, messages, tools):
-        self.calls.append({"system": system, "messages": messages, "tools": tools})
-        for event in self._streams.pop(0):
-            yield event
+def _tool_message_from_call(messages) -> ToolMessage:
+    return next(m for m in messages if isinstance(m, ToolMessage))
 
 
 def _seed_category(conn, name):
@@ -68,40 +50,36 @@ def _seed_zurich(conn):
     conn.commit()
 
 
+def _zurich_tools():
+    return [
+        build_show_city_map_tool(["Zurich", "EmptyCity"], ["Park", "Cafe", "Bar"], []),
+        build_get_city_context_tool(),
+    ]
+
+
 def test_no_tool_call_produces_text_and_no_map(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubClient([LLMResponse(text="General travel advice.", tool_call=None)])
+    model = BindableFakeModel(responses=[_text_response("General travel advice.")])
 
-    result = handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="hi", history=[]
-    )
+    result = handle_message(conn, model, _zurich_tools(), system="sys", message="hi", history=[])
 
     assert result == {"text": "General travel advice."}
     assert "map" not in result
-    assert len(client.calls) == 1
 
 
 def test_tool_call_without_categories_shows_every_category(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(name="show_city_map", input={"city": "Zurich"}, id="toolu_1"),
-            ),
-            LLMResponse(text="Here's everything saved in Zurich.", tool_call=None),
+    model = CountingFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "Zurich"}),
+            _text_response("Here's everything saved in Zurich."),
         ]
     )
 
     result = handle_message(
-        conn,
-        client,
-        tools=[{"name": "show_city_map"}],
-        system="sys",
-        message="what's good in zurich?",
-        history=[],
+        conn, model, _zurich_tools(), system="sys", message="what's good in zurich?", history=[]
     )
 
     assert result["text"] == "Here's everything saved in Zurich."
@@ -114,27 +92,20 @@ def test_tool_call_without_categories_shows_every_category(tmp_path):
     assert garden["note"] == "nice"
     assert garden["category"] == "Park"
     assert garden["maps_url"] == "https://maps/1"
-    assert len(client.calls) == 2
+    assert len(model.calls) == 2
 
 
 def test_tool_call_with_single_category_filters_spots(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="show_city_map", input={"city": "Zurich", "categories": ["Cafe"]}, id="toolu_1"
-                ),
-            ),
-            LLMResponse(text="Here's the cafe.", tool_call=None),
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "Zurich", "categories": ["Cafe"]}),
+            _text_response("Here's the cafe."),
         ]
     )
 
-    result = handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="just cafes", history=[]
-    )
+    result = handle_message(conn, model, _zurich_tools(), system="sys", message="just cafes", history=[])
 
     titles = {marker["title"] for marker in result["map"]["markers"]}
     assert titles == {"Aardvark Cafe"}
@@ -143,22 +114,15 @@ def test_tool_call_with_single_category_filters_spots(tmp_path):
 def test_tool_call_with_multiple_categories_combines_spots(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="show_city_map",
-                    input={"city": "Zurich", "categories": ["Cafe", "Bar"]},
-                    id="toolu_1",
-                ),
-            ),
-            LLMResponse(text="Cafes and bars for you.", tool_call=None),
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "Zurich", "categories": ["Cafe", "Bar"]}),
+            _text_response("Cafes and bars for you."),
         ]
     )
 
     result = handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="cafes and bars", history=[]
+        conn, model, _zurich_tools(), system="sys", message="cafes and bars", history=[]
     )
 
     titles = {marker["title"] for marker in result["map"]["markers"]}
@@ -168,23 +132,14 @@ def test_tool_call_with_multiple_categories_combines_spots(tmp_path):
 def test_tool_call_with_search_query_match_produces_text_and_map_of_that_spot(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="show_city_map",
-                    input={"city": "Zurich", "search_query": "Garden"},
-                    id="toolu_1",
-                ),
-            ),
-            LLMResponse(text="I found one match: Botanical Garden.", tool_call=None),
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "Zurich", "search_query": "Garden"}),
+            _text_response("I found one match: Botanical Garden."),
         ]
     )
 
-    result = handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="any garden?", history=[]
-    )
+    result = handle_message(conn, model, _zurich_tools(), system="sys", message="any garden?", history=[])
 
     assert result["text"] == "I found one match: Botanical Garden."
     assert result["map"]["city"] == "Zurich"
@@ -195,35 +150,17 @@ def test_tool_call_with_search_query_match_produces_text_and_map_of_that_spot(tm
 def test_search_query_tool_result_contains_matching_spot_details(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="show_city_map",
-                    input={"city": "Zurich", "search_query": "Garden"},
-                    id="toolu_1",
-                ),
-            ),
-            LLMResponse(text="Prose.", tool_call=None),
+    model = CountingFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "Zurich", "search_query": "Garden"}),
+            _text_response("Prose."),
         ]
     )
 
-    handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="any garden?", history=[]
-    )
+    handle_message(conn, model, _zurich_tools(), system="sys", message="any garden?", history=[])
 
-    follow_up_messages = client.calls[1]["messages"]
-    tool_result_message = next(
-        m
-        for m in follow_up_messages
-        if isinstance(m.get("content"), list)
-        and any(block.get("type") == "tool_result" for block in m["content"])
-    )
-    tool_result_block = next(
-        block for block in tool_result_message["content"] if block["type"] == "tool_result"
-    )
-    parsed = json.loads(tool_result_block["content"])
+    tool_message = _tool_message_from_call(model.calls[1])
+    parsed = json.loads(tool_message.content)
 
     assert parsed == [{"title": "Botanical Garden", "note": "nice", "category": "Park"}]
 
@@ -231,58 +168,36 @@ def test_search_query_tool_result_contains_matching_spot_details(tmp_path):
 def test_search_query_no_match_produces_empty_result_and_no_map(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="show_city_map",
-                    input={"city": "Zurich", "search_query": "sauna"},
-                    id="toolu_1",
-                ),
-            ),
-            LLMResponse(text="Nothing sauna-related saved.", tool_call=None),
+    model = CountingFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "Zurich", "search_query": "sauna"}),
+            _text_response("Nothing sauna-related saved."),
         ]
     )
 
-    result = handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="sauna?", history=[]
-    )
+    result = handle_message(conn, model, _zurich_tools(), system="sys", message="sauna?", history=[])
 
     assert result == {"text": "Nothing sauna-related saved."}
     assert "map" not in result
 
-    follow_up_messages = client.calls[1]["messages"]
-    tool_result_block = next(
-        block
-        for m in follow_up_messages
-        if isinstance(m.get("content"), list)
-        for block in m["content"]
-        if block.get("type") == "tool_result"
-    )
-    assert json.loads(tool_result_block["content"]) == []
+    tool_message = _tool_message_from_call(model.calls[1])
+    assert json.loads(tool_message.content) == []
 
 
 def test_search_query_takes_precedence_over_categories(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="show_city_map",
-                    input={"city": "Zurich", "search_query": "Garden", "categories": ["Bar"]},
-                    id="toolu_1",
-                ),
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response(
+                "show_city_map",
+                {"city": "Zurich", "search_query": "Garden", "categories": ["Bar"]},
             ),
-            LLMResponse(text="Found it.", tool_call=None),
+            _text_response("Found it."),
         ]
     )
 
-    result = handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="?", history=[]
-    )
+    result = handle_message(conn, model, _zurich_tools(), system="sys", message="?", history=[])
 
     # The map reflects the search match (Botanical Garden), not the ignored `categories`
     # filter (Bar) — categories is only meaningful when search_query is absent.
@@ -293,31 +208,17 @@ def test_search_query_takes_precedence_over_categories(tmp_path):
 def test_tool_result_sent_to_model_contains_no_lat_or_lng(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(name="show_city_map", input={"city": "Zurich"}, id="toolu_1"),
-            ),
-            LLMResponse(text="Prose.", tool_call=None),
+    model = CountingFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "Zurich"}),
+            _text_response("Prose."),
         ]
     )
 
-    handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="zurich?", history=[]
-    )
+    handle_message(conn, model, _zurich_tools(), system="sys", message="zurich?", history=[])
 
-    follow_up_messages = client.calls[1]["messages"]
-    tool_result_message = next(
-        m
-        for m in follow_up_messages
-        if isinstance(m.get("content"), list)
-        and any(block.get("type") == "tool_result" for block in m["content"])
-    )
-    tool_result_block = next(
-        block for block in tool_result_message["content"] if block["type"] == "tool_result"
-    )
-    raw_content = tool_result_block["content"]
+    tool_message = _tool_message_from_call(model.calls[1])
+    raw_content = tool_message.content
 
     assert "lat" not in raw_content.lower()
     assert "lng" not in raw_content.lower()
@@ -330,25 +231,15 @@ def test_tool_result_sent_to_model_contains_no_lat_or_lng(tmp_path):
 def test_tool_call_for_city_with_no_spots_produces_empty_markers(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="show_city_map", input={"city": "EmptyCity"}, id="toolu_1"
-                ),
-            ),
-            LLMResponse(text="Nothing saved there yet.", tool_call=None),
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "EmptyCity"}),
+            _text_response("Nothing saved there yet."),
         ]
     )
 
     result = handle_message(
-        conn,
-        client,
-        tools=[{"name": "show_city_map"}],
-        system="sys",
-        message="empty city?",
-        history=[],
+        conn, model, _zurich_tools(), system="sys", message="empty city?", history=[]
     )
 
     assert result["map"]["markers"] == []
@@ -358,124 +249,84 @@ def test_tool_call_for_city_with_no_spots_produces_empty_markers(tmp_path):
 def test_history_longer_than_cap_is_truncated_before_being_sent(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubClient([LLMResponse(text="ok", tool_call=None)])
+    model = CountingFakeModel(responses=[_text_response("ok")])
 
     history = [
         {"role": "user" if i % 2 == 0 else "assistant", "content": f"turn-{i}"} for i in range(20)
     ]
 
     handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="new message", history=history
+        conn, model, _zurich_tools(), system="sys", message="new message", history=history
     )
 
-    sent_messages = client.calls[0]["messages"]
-    assert len(sent_messages) == 13  # last 12 history messages (6 turns) + the new message
-    assert sent_messages[0]["content"] == "turn-8"
-    assert sent_messages[-1] == {"role": "user", "content": "new message"}
+    sent_messages = model.calls[0]
+    # index 0 is the SystemMessage app/chat.py prepends (the old raw-Anthropic client took
+    # `system` as a separate parameter; LangChain convention puts it inside `messages`) —
+    # so the capped history + new message now start at index 1, not 0.
+    assert len(sent_messages) == 14  # system + last 12 history messages (6 turns) + new message
+    assert isinstance(sent_messages[1], HumanMessage)
+    assert sent_messages[1].content == "turn-8"
+    assert isinstance(sent_messages[-1], HumanMessage)
+    assert sent_messages[-1].content == "new message"
 
 
 def test_stream_no_tool_call_yields_deltas_then_done(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubStreamClient(
-        [
-            [
-                ("delta", "General "),
-                ("delta", "travel advice."),
-                ("done", LLMResponse(text="General travel advice.", tool_call=None)),
-            ]
-        ]
-    )
+    model = BindableFakeModel(responses=[_text_response("General travel advice.")])
 
     events = list(
-        stream_message(
-            conn, client, tools=[{"name": "show_city_map"}], system="sys", message="hi", history=[]
-        )
+        stream_message(conn, model, _zurich_tools(), system="sys", message="hi", history=[])
     )
 
-    assert events == [
-        {"type": "delta", "text": "General "},
-        {"type": "delta", "text": "travel advice."},
-        {"type": "done"},
-    ]
-    assert len(client.calls) == 1
+    # FakeMessagesListChatModel doesn't implement real per-token streaming (it yields the
+    # whole response as one chunk), unlike the old hand-scripted StubStreamClient — so this
+    # asserts on the aggregate streamed text rather than an exact chunk count.
+    delta_text = "".join(e["text"] for e in events if e["type"] == "delta")
+    assert delta_text == "General travel advice."
+    assert events[-1] == {"type": "done"}
+    assert not any(e["type"] == "map" for e in events)
 
 
 def test_stream_tool_call_without_categories_shows_every_category(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubStreamClient(
-        [
-            [
-                (
-                    "done",
-                    LLMResponse(
-                        text="",
-                        tool_call=ToolCall(
-                            name="show_city_map", input={"city": "Zurich"}, id="toolu_1"
-                        ),
-                    ),
-                )
-            ],
-            [
-                ("delta", "Here are "),
-                ("delta", "some spots."),
-                ("done", LLMResponse(text="Here are some spots.", tool_call=None)),
-            ],
+    model = CountingFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "Zurich"}),
+            _text_response("Here are some spots."),
         ]
     )
 
     events = list(
         stream_message(
-            conn,
-            client,
-            tools=[{"name": "show_city_map"}],
-            system="sys",
-            message="what's good in zurich?",
-            history=[],
+            conn, model, _zurich_tools(), system="sys", message="what's good in zurich?", history=[]
         )
     )
 
-    assert events[0] == {"type": "delta", "text": "Here are "}
-    assert events[1] == {"type": "delta", "text": "some spots."}
-    assert events[2]["type"] == "map"
-    assert events[2]["map"]["city"] == "Zurich"
-    titles = {marker["title"] for marker in events[2]["map"]["markers"]}
+    delta_text = "".join(e["text"] for e in events if e["type"] == "delta")
+    assert delta_text == "Here are some spots."
+    map_event = next(e for e in events if e["type"] == "map")
+    assert map_event["map"]["city"] == "Zurich"
+    titles = {marker["title"] for marker in map_event["map"]["markers"]}
     assert titles == {"Botanical Garden", "Aardvark Cafe", "Night Owl Bar"}
-    assert events[3] == {"type": "done"}
-    assert len(client.calls) == 2
+    assert events[-1] == {"type": "done"}
+    assert len(model.calls) == 2
 
 
 def test_stream_tool_call_with_categories_filters_spots(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubStreamClient(
-        [
-            [
-                (
-                    "done",
-                    LLMResponse(
-                        text="",
-                        tool_call=ToolCall(
-                            name="show_city_map",
-                            input={"city": "Zurich", "categories": ["Park", "Bar"]},
-                            id="toolu_1",
-                        ),
-                    ),
-                )
-            ],
-            [("done", LLMResponse(text="A garden and a bar.", tool_call=None))],
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "Zurich", "categories": ["Park", "Bar"]}),
+            _text_response("A garden and a bar."),
         ]
     )
 
     events = list(
         stream_message(
-            conn,
-            client,
-            tools=[{"name": "show_city_map"}],
-            system="sys",
-            message="park and bar",
-            history=[],
+            conn, model, _zurich_tools(), system="sys", message="park and bar", history=[]
         )
     )
 
@@ -487,37 +338,15 @@ def test_stream_tool_call_with_categories_filters_spots(tmp_path):
 def test_stream_tool_call_with_search_query_match_yields_map_event(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubStreamClient(
-        [
-            [
-                (
-                    "done",
-                    LLMResponse(
-                        text="",
-                        tool_call=ToolCall(
-                            name="show_city_map",
-                            input={"city": "Zurich", "search_query": "Garden"},
-                            id="toolu_1",
-                        ),
-                    ),
-                )
-            ],
-            [
-                ("delta", "Found the garden."),
-                ("done", LLMResponse(text="Found the garden.", tool_call=None)),
-            ],
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "Zurich", "search_query": "Garden"}),
+            _text_response("Found the garden."),
         ]
     )
 
     events = list(
-        stream_message(
-            conn,
-            client,
-            tools=[{"name": "show_city_map"}],
-            system="sys",
-            message="any garden?",
-            history=[],
-        )
+        stream_message(conn, model, _zurich_tools(), system="sys", message="any garden?", history=[])
     )
 
     map_event = next(e for e in events if e["type"] == "map")
@@ -529,83 +358,37 @@ def test_stream_tool_call_with_search_query_match_yields_map_event(tmp_path):
 def test_stream_tool_call_with_search_query_no_match_yields_no_map_event(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubStreamClient(
-        [
-            [
-                (
-                    "done",
-                    LLMResponse(
-                        text="",
-                        tool_call=ToolCall(
-                            name="show_city_map",
-                            input={"city": "Zurich", "search_query": "sauna"},
-                            id="toolu_1",
-                        ),
-                    ),
-                )
-            ],
-            [
-                ("delta", "Nothing sauna-related saved."),
-                ("done", LLMResponse(text="Nothing sauna-related saved.", tool_call=None)),
-            ],
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "Zurich", "search_query": "sauna"}),
+            _text_response("Nothing sauna-related saved."),
         ]
     )
 
     events = list(
-        stream_message(
-            conn,
-            client,
-            tools=[{"name": "show_city_map"}],
-            system="sys",
-            message="sauna?",
-            history=[],
-        )
+        stream_message(conn, model, _zurich_tools(), system="sys", message="sauna?", history=[])
     )
 
     assert not any(e["type"] == "map" for e in events)
-    assert events == [
-        {"type": "delta", "text": "Nothing sauna-related saved."},
-        {"type": "done"},
-    ]
+    delta_text = "".join(e["text"] for e in events if e["type"] == "delta")
+    assert delta_text == "Nothing sauna-related saved."
+    assert events[-1] == {"type": "done"}
 
 
 def test_stream_tool_result_sent_to_model_contains_no_lat_or_lng(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubStreamClient(
-        [
-            [
-                (
-                    "done",
-                    LLMResponse(
-                        text="",
-                        tool_call=ToolCall(
-                            name="show_city_map", input={"city": "Zurich"}, id="toolu_1"
-                        ),
-                    ),
-                )
-            ],
-            [("done", LLMResponse(text="Prose.", tool_call=None))],
+    model = CountingFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"city": "Zurich"}),
+            _text_response("Prose."),
         ]
     )
 
-    list(
-        stream_message(
-            conn, client, tools=[{"name": "show_city_map"}], system="sys", message="zurich?", history=[]
-        )
-    )
+    list(stream_message(conn, model, _zurich_tools(), system="sys", message="zurich?", history=[]))
 
-    follow_up_messages = client.calls[1]["messages"]
-    tool_result_message = next(
-        m
-        for m in follow_up_messages
-        if isinstance(m.get("content"), list)
-        and any(block.get("type") == "tool_result" for block in m["content"])
-    )
-    tool_result_block = next(
-        block for block in tool_result_message["content"] if block["type"] == "tool_result"
-    )
-    raw_content = tool_result_block["content"]
+    tool_message = _tool_message_from_call(model.calls[1])
+    raw_content = tool_message.content
 
     assert "lat" not in raw_content.lower()
     assert "lng" not in raw_content.lower()
@@ -618,7 +401,7 @@ def test_stream_tool_result_sent_to_model_contains_no_lat_or_lng(tmp_path):
 def test_stream_history_longer_than_cap_is_truncated_before_being_sent(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubStreamClient([[("done", LLMResponse(text="ok", tool_call=None))]])
+    model = CountingFakeModel(responses=[_text_response("ok")])
 
     history = [
         {"role": "user" if i % 2 == 0 else "assistant", "content": f"turn-{i}"} for i in range(20)
@@ -626,19 +409,14 @@ def test_stream_history_longer_than_cap_is_truncated_before_being_sent(tmp_path)
 
     list(
         stream_message(
-            conn,
-            client,
-            tools=[{"name": "show_city_map"}],
-            system="sys",
-            message="new message",
-            history=history,
+            conn, model, _zurich_tools(), system="sys", message="new message", history=history
         )
     )
 
-    sent_messages = client.calls[0]["messages"]
-    assert len(sent_messages) == 13
-    assert sent_messages[0]["content"] == "turn-8"
-    assert sent_messages[-1] == {"role": "user", "content": "new message"}
+    sent_messages = model.calls[0]
+    assert len(sent_messages) == 14
+    assert sent_messages[1].content == "turn-8"
+    assert sent_messages[-1].content == "new message"
 
 
 # --- proximity filtering (near_lat/near_lng) -----------------------------------------
@@ -651,23 +429,17 @@ def test_stream_history_longer_than_cap_is_truncated_before_being_sent(tmp_path)
 def test_near_filter_with_explicit_radius_keeps_only_the_closest_spot(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="show_city_map",
-                    input={"city": "Zurich", "near_lat": 47.36, "near_lng": 8.55, "radius_km": 0.5},
-                    id="toolu_1",
-                ),
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response(
+                "show_city_map",
+                {"city": "Zurich", "near_lat": 47.36, "near_lng": 8.55, "radius_km": 0.5},
             ),
-            LLMResponse(text="Just the garden is that close.", tool_call=None),
+            _text_response("Just the garden is that close."),
         ]
     )
 
-    result = handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="near here?", history=[]
-    )
+    result = handle_message(conn, model, _zurich_tools(), system="sys", message="near here?", history=[])
 
     titles = {marker["title"] for marker in result["map"]["markers"]}
     assert titles == {"Botanical Garden"}
@@ -676,23 +448,16 @@ def test_near_filter_with_explicit_radius_keeps_only_the_closest_spot(tmp_path):
 def test_near_filter_uses_default_radius_when_omitted(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="show_city_map",
-                    input={"city": "Zurich", "near_lat": 47.36, "near_lng": 8.55},
-                    id="toolu_1",
-                ),
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response(
+                "show_city_map", {"city": "Zurich", "near_lat": 47.36, "near_lng": 8.55}
             ),
-            LLMResponse(text="A couple of spots nearby.", tool_call=None),
+            _text_response("A couple of spots nearby."),
         ]
     )
 
-    result = handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="near here?", history=[]
-    )
+    result = handle_message(conn, model, _zurich_tools(), system="sys", message="near here?", history=[])
 
     # Default radius (1.5 km) includes the Cafe (~1.34 km) but not the Bar (~2.69 km).
     titles = {marker["title"] for marker in result["map"]["markers"]}
@@ -702,29 +467,23 @@ def test_near_filter_uses_default_radius_when_omitted(tmp_path):
 def test_near_filter_combines_with_categories(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="show_city_map",
-                    input={
-                        "city": "Zurich",
-                        "categories": ["Cafe", "Bar"],
-                        "near_lat": 47.36,
-                        "near_lng": 8.55,
-                        "radius_km": 2.0,
-                    },
-                    id="toolu_1",
-                ),
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response(
+                "show_city_map",
+                {
+                    "city": "Zurich",
+                    "categories": ["Cafe", "Bar"],
+                    "near_lat": 47.36,
+                    "near_lng": 8.55,
+                    "radius_km": 2.0,
+                },
             ),
-            LLMResponse(text="One cafe within range.", tool_call=None),
+            _text_response("One cafe within range."),
         ]
     )
 
-    result = handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="near here?", history=[]
-    )
+    result = handle_message(conn, model, _zurich_tools(), system="sys", message="near here?", history=[])
 
     # Category filter excludes the Garden (a Park); radius (2.0 km) excludes the Bar
     # (~2.69 km) even though its category matches.
@@ -735,29 +494,23 @@ def test_near_filter_combines_with_categories(tmp_path):
 def test_near_filter_applies_on_top_of_search_query(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="show_city_map",
-                    input={
-                        "city": "Zurich",
-                        "search_query": "Garden",
-                        "near_lat": 47.38,
-                        "near_lng": 8.57,
-                        "radius_km": 0.1,
-                    },
-                    id="toolu_1",
-                ),
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response(
+                "show_city_map",
+                {
+                    "city": "Zurich",
+                    "search_query": "Garden",
+                    "near_lat": 47.38,
+                    "near_lng": 8.57,
+                    "radius_km": 0.1,
+                },
             ),
-            LLMResponse(text="That garden isn't actually near there.", tool_call=None),
+            _text_response("That garden isn't actually near there."),
         ]
     )
 
-    result = handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="?", history=[]
-    )
+    result = handle_message(conn, model, _zurich_tools(), system="sys", message="?", history=[])
 
     # The keyword match (Botanical Garden) is real, but it's ~2.69 km from the given
     # point — outside a 0.1 km radius — so the near-filter empties it out entirely.
@@ -801,26 +554,27 @@ def _seed_france(conn):
     conn.commit()
 
 
+def _france_tools():
+    return [
+        build_show_city_map_tool(
+            ["Paris", "Lyon", "Zurich"], ["Restaurants", "Bars And Clubs"], ["France", "Switzerland"]
+        ),
+        build_get_city_context_tool(),
+    ]
+
+
 def test_country_tool_call_combines_every_city_in_that_country(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_france(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(name="show_city_map", input={"country": "France"}, id="toolu_1"),
-            ),
-            LLMResponse(text="Here's everything I've saved in France.", tool_call=None),
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"country": "France"}),
+            _text_response("Here's everything I've saved in France."),
         ]
     )
 
     result = handle_message(
-        conn,
-        client,
-        tools=[{"name": "show_city_map"}],
-        system="sys",
-        message="what do you have for france?",
-        history=[],
+        conn, model, _france_tools(), system="sys", message="what do you have for france?", history=[]
     )
 
     assert result["map"]["city"] == "France"
@@ -833,19 +587,14 @@ def test_country_tool_call_combines_every_city_in_that_country(tmp_path):
 def test_country_tool_call_markers_are_tagged_with_their_source_city(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_france(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(name="show_city_map", input={"country": "France"}, id="toolu_1"),
-            ),
-            LLMResponse(text="Prose.", tool_call=None),
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"country": "France"}),
+            _text_response("Prose."),
         ]
     )
 
-    result = handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="france?", history=[]
-    )
+    result = handle_message(conn, model, _france_tools(), system="sys", message="france?", history=[])
 
     marker_cities = {m["title"]: m["city"] for m in result["map"]["markers"]}
     assert marker_cities == {
@@ -858,22 +607,17 @@ def test_country_tool_call_markers_are_tagged_with_their_source_city(tmp_path):
 def test_country_tool_call_with_categories_filters_across_cities(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_france(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="show_city_map",
-                    input={"country": "France", "categories": ["Bars And Clubs"]},
-                    id="toolu_1",
-                ),
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response(
+                "show_city_map", {"country": "France", "categories": ["Bars And Clubs"]}
             ),
-            LLMResponse(text="Prose.", tool_call=None),
+            _text_response("Prose."),
         ]
     )
 
     result = handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="bars in france?", history=[]
+        conn, model, _france_tools(), system="sys", message="bars in france?", history=[]
     )
 
     titles = {marker["title"] for marker in result["map"]["markers"]}
@@ -883,29 +627,17 @@ def test_country_tool_call_with_categories_filters_across_cities(tmp_path):
 def test_country_tool_result_never_includes_coordinates(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_france(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(name="show_city_map", input={"country": "France"}, id="toolu_1"),
-            ),
-            LLMResponse(text="Prose.", tool_call=None),
+    model = CountingFakeModel(
+        responses=[
+            _tool_call_response("show_city_map", {"country": "France"}),
+            _text_response("Prose."),
         ]
     )
 
-    handle_message(
-        conn, client, tools=[{"name": "show_city_map"}], system="sys", message="france?", history=[]
-    )
+    handle_message(conn, model, _france_tools(), system="sys", message="france?", history=[])
 
-    follow_up_messages = client.calls[1]["messages"]
-    tool_result_block = next(
-        block
-        for m in follow_up_messages
-        if isinstance(m.get("content"), list)
-        for block in m["content"]
-        if block.get("type") == "tool_result"
-    )
-    raw_content = tool_result_block["content"]
+    tool_message = _tool_message_from_call(model.calls[1])
+    raw_content = tool_message.content
 
     assert "lat" not in raw_content.lower()
     assert "lng" not in raw_content.lower()
@@ -942,22 +674,17 @@ def _seed_story_index(conn):
 def test_get_city_context_tool_call_produces_text_only_no_map(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     story_index, embedder = _seed_story_index(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="get_city_context", input={"query": "Tokyo food"}, id="toolu_1"
-                ),
-            ),
-            LLMResponse(text="Sounds like a great ramen trip.", tool_call=None),
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response("get_city_context", {"query": "Tokyo food"}),
+            _text_response("Sounds like a great ramen trip."),
         ]
     )
 
     result = handle_message(
         conn,
-        client,
-        tools=[{"name": "show_city_map"}, {"name": "get_city_context"}],
+        model,
+        [build_show_city_map_tool([], [], []), build_get_city_context_tool()],
         system="sys",
         message="tell me about Tokyo food",
         history=[],
@@ -972,22 +699,17 @@ def test_get_city_context_tool_call_produces_text_only_no_map(tmp_path):
 def test_get_city_context_tool_result_contains_matching_story_and_city(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     story_index, embedder = _seed_story_index(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="get_city_context", input={"query": "Tokyo food"}, id="toolu_1"
-                ),
-            ),
-            LLMResponse(text="Prose.", tool_call=None),
+    model = CountingFakeModel(
+        responses=[
+            _tool_call_response("get_city_context", {"query": "Tokyo food"}),
+            _text_response("Prose."),
         ]
     )
 
     handle_message(
         conn,
-        client,
-        tools=[{"name": "show_city_map"}, {"name": "get_city_context"}],
+        model,
+        [build_show_city_map_tool([], [], []), build_get_city_context_tool()],
         system="sys",
         message="tell me about Tokyo food",
         history=[],
@@ -995,37 +717,25 @@ def test_get_city_context_tool_result_contains_matching_story_and_city(tmp_path)
         embedder=embedder,
     )
 
-    follow_up_messages = client.calls[1]["messages"]
-    tool_result_block = next(
-        block
-        for m in follow_up_messages
-        if isinstance(m.get("content"), list)
-        for block in m["content"]
-        if block.get("type") == "tool_result"
-    )
-    parsed = json.loads(tool_result_block["content"])
+    tool_message = _tool_message_from_call(model.calls[1])
+    parsed = json.loads(tool_message.content)
 
     assert parsed[0] == {"story": "ramen and neon lights in Shinjuku", "city": "Tokyo"}
 
 
 def test_get_city_context_with_no_index_returns_empty_result_and_no_map(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="get_city_context", input={"query": "anything"}, id="toolu_1"
-                ),
-            ),
-            LLMResponse(text="No diary notes on that.", tool_call=None),
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response("get_city_context", {"query": "anything"}),
+            _text_response("No diary notes on that."),
         ]
     )
 
     result = handle_message(
         conn,
-        client,
-        tools=[{"name": "show_city_map"}, {"name": "get_city_context"}],
+        model,
+        [build_show_city_map_tool([], [], []), build_get_city_context_tool()],
         system="sys",
         message="anything?",
         history=[],
@@ -1040,31 +750,18 @@ def test_get_city_context_with_no_index_returns_empty_result_and_no_map(tmp_path
 def test_stream_get_city_context_tool_call_yields_no_map_event(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     story_index, embedder = _seed_story_index(conn)
-    client = StubStreamClient(
-        [
-            [
-                (
-                    "done",
-                    LLMResponse(
-                        text="",
-                        tool_call=ToolCall(
-                            name="get_city_context", input={"query": "Tokyo food"}, id="toolu_1"
-                        ),
-                    ),
-                )
-            ],
-            [
-                ("delta", "Sounds like a great trip."),
-                ("done", LLMResponse(text="Sounds like a great trip.", tool_call=None)),
-            ],
+    model = BindableFakeModel(
+        responses=[
+            _tool_call_response("get_city_context", {"query": "Tokyo food"}),
+            _text_response("Sounds like a great trip."),
         ]
     )
 
     events = list(
         stream_message(
             conn,
-            client,
-            tools=[{"name": "show_city_map"}, {"name": "get_city_context"}],
+            model,
+            [build_show_city_map_tool([], [], []), build_get_city_context_tool()],
             system="sys",
             message="tell me about Tokyo food",
             history=[],
@@ -1074,10 +771,9 @@ def test_stream_get_city_context_tool_call_yields_no_map_event(tmp_path):
     )
 
     assert not any(e["type"] == "map" for e in events)
-    assert events == [
-        {"type": "delta", "text": "Sounds like a great trip."},
-        {"type": "done"},
-    ]
+    delta_text = "".join(e["text"] for e in events if e["type"] == "delta")
+    assert delta_text == "Sounds like a great trip."
+    assert events[-1] == {"type": "done"}
 
 
 # --- chaining get_city_context then show_city_map in a single turn ------------------
@@ -1087,28 +783,18 @@ def test_chained_context_then_map_tool_calls_produce_text_and_map(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
     story_index, embedder = _seed_story_index(conn)
-    client = StubClient(
-        [
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="get_city_context", input={"query": "Tokyo food"}, id="toolu_1"
-                ),
-            ),
-            LLMResponse(
-                text="",
-                tool_call=ToolCall(
-                    name="show_city_map", input={"city": "Zurich"}, id="toolu_2"
-                ),
-            ),
-            LLMResponse(text="Here's Zurich, with some diary color too.", tool_call=None),
+    model = CountingFakeModel(
+        responses=[
+            _tool_call_response("get_city_context", {"query": "Tokyo food"}, tool_id="toolu_1"),
+            _tool_call_response("show_city_map", {"city": "Zurich"}, tool_id="toolu_2"),
+            _text_response("Here's Zurich, with some diary color too."),
         ]
     )
 
     result = handle_message(
         conn,
-        client,
-        tools=[{"name": "show_city_map"}, {"name": "get_city_context"}],
+        model,
+        _zurich_tools(),
         system="sys",
         message="tell me about Zurich food and show me the map",
         history=[],
@@ -1118,51 +804,26 @@ def test_chained_context_then_map_tool_calls_produce_text_and_map(tmp_path):
 
     assert result["text"] == "Here's Zurich, with some diary color too."
     assert result["map"]["city"] == "Zurich"
-    assert len(client.calls) == 3
+    assert len(model.calls) == 3
 
 
 def test_stream_chained_context_then_map_tool_calls_yields_map_event(tmp_path):
     conn = get_writable_connection(tmp_path / "travel.db")
     _seed_zurich(conn)
     story_index, embedder = _seed_story_index(conn)
-    client = StubStreamClient(
-        [
-            [
-                (
-                    "done",
-                    LLMResponse(
-                        text="",
-                        tool_call=ToolCall(
-                            name="get_city_context",
-                            input={"query": "Tokyo food"},
-                            id="toolu_1",
-                        ),
-                    ),
-                )
-            ],
-            [
-                (
-                    "done",
-                    LLMResponse(
-                        text="",
-                        tool_call=ToolCall(
-                            name="show_city_map", input={"city": "Zurich"}, id="toolu_2"
-                        ),
-                    ),
-                )
-            ],
-            [
-                ("delta", "Here's Zurich."),
-                ("done", LLMResponse(text="Here's Zurich.", tool_call=None)),
-            ],
+    model = CountingFakeModel(
+        responses=[
+            _tool_call_response("get_city_context", {"query": "Tokyo food"}, tool_id="toolu_1"),
+            _tool_call_response("show_city_map", {"city": "Zurich"}, tool_id="toolu_2"),
+            _text_response("Here's Zurich."),
         ]
     )
 
     events = list(
         stream_message(
             conn,
-            client,
-            tools=[{"name": "show_city_map"}, {"name": "get_city_context"}],
+            model,
+            _zurich_tools(),
             system="sys",
             message="tell me about Zurich food and show me the map",
             history=[],
@@ -1174,4 +835,4 @@ def test_stream_chained_context_then_map_tool_calls_yields_map_event(tmp_path):
     map_event = next(e for e in events if e["type"] == "map")
     assert map_event["map"]["city"] == "Zurich"
     assert events[-1] == {"type": "done"}
-    assert len(client.calls) == 3
+    assert len(model.calls) == 3

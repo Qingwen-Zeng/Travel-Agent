@@ -60,7 +60,10 @@ def _ensure_cities_country_column(conn: sqlite3.Connection) -> None:
 
 
 def get_writable_connection(db_path: str | Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
+    # check_same_thread=False: see get_readonly_connection below — the test suite
+    # reuses this same connection to drive the LangGraph agent (whose ToolNode runs
+    # tool calls in a worker thread pool), so it needs the same relaxation.
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
@@ -72,6 +75,11 @@ def get_writable_connection(db_path: str | Path) -> sqlite3.Connection:
 
 
 def get_readonly_connection(db_path: str | Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    # check_same_thread=False: LangGraph's ToolNode runs tool calls in a worker thread
+    # pool, handing this same connection from the request's thread to a tool-execution
+    # thread and back, sequentially (never concurrently) within one request's lifetime.
+    # Safe here because each request gets its own fresh connection via get_db(), closed
+    # at the end of that request — this never shares one connection across requests.
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn

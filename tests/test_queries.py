@@ -276,10 +276,11 @@ def test_search_city_spots_scoped_to_the_given_city(tmp_path):
 
 
 def test_search_city_spots_includes_coordinates_for_map_rendering(tmp_path):
-    # A matched spot can now be shown on a map (app.chat._resolve_tool_call), so this
-    # query — unlike the others — does carry lat/lng. The coordinate-stripping safety
-    # property lives at app.chat._tool_result_content, which explicitly picks fields
-    # before anything is sent to the model; it never trusts what a query happens to return.
+    # A matched spot can now be shown on a map (the show_city_map tool in app/agent.py),
+    # so this query — unlike the others — does carry lat/lng. The coordinate-stripping
+    # safety property lives at app.agent._tool_result_content, which explicitly picks
+    # fields before anything is sent to the model; it never trusts what a query happens
+    # to return.
     conn = _conn(tmp_path)
     city_id = _seed_city(conn, "Bangkok")
     category_id = _seed_category(conn, "Lifestyle")

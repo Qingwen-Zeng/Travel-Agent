@@ -5,18 +5,15 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from langchain_anthropic import ChatAnthropic
 from pydantic import BaseModel
 
+from app.agent import build_get_city_context_tool, build_show_city_map_tool
 from app.chat import handle_message, stream_message
 from app.config import settings
 from app.db import get_readonly_connection
 from app.limits import DailyMessageCap, PerIPRateLimiter, RateLimitExceeded
-from app.llm import (
-    AnthropicClient,
-    build_context_tool_definition,
-    build_system_prompt,
-    build_tool_definition,
-)
+from app.llm import build_system_prompt
 from app.maps import build_map_payload
 from app.queries import (
     get_all_city_categories,
@@ -28,12 +25,16 @@ from app.queries import (
 from app.rag import SentenceTransformerEmbedder, load_index
 
 BASE_DIR = Path(__file__).resolve().parent
+MAX_TOKENS = 1024
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
-_llm_client = AnthropicClient(api_key=settings.llm_api_key, model=settings.llm_model)
+# LangSmith tracing is fully automatic here whenever LANGSMITH_API_KEY is set (see
+# app/config.py) — ChatAnthropic and the LangGraph agent trace through the standard
+# LangChain callback machinery, no manual wrapping needed.
+_model = ChatAnthropic(model=settings.llm_model, api_key=settings.llm_api_key, max_tokens=MAX_TOKENS)
 _per_ip_limiter = PerIPRateLimiter(limit=settings.rate_limit_per_hour, window_seconds=3600)
 _daily_cap = DailyMessageCap(limit=settings.daily_message_cap)
 _story_embedder = SentenceTransformerEmbedder()
@@ -48,8 +49,8 @@ def get_db():
         conn.close()
 
 
-def get_llm_client():
-    return _llm_client
+def get_model():
+    return _model
 
 
 def get_per_ip_limiter():
@@ -69,7 +70,7 @@ def _capped_message_if_limited(request: Request, ip_limiter: PerIPRateLimiter, d
     return None
 
 
-def _build_tools_and_system(conn) -> tuple[list[dict], str]:
+def _build_tools_and_system(conn) -> tuple[list, str]:
     city_names = [row["name"] for row in list_cities(conn)]
     category_names = [row["name"] for row in list_categories(conn)]
     country_names = [row["country"] for row in list_countries(conn)]
@@ -81,8 +82,8 @@ def _build_tools_and_system(conn) -> tuple[list[dict], str]:
         )
 
     tools = [
-        build_tool_definition(city_names, category_names, country_names),
-        build_context_tool_definition(),
+        build_show_city_map_tool(city_names, category_names, country_names),
+        build_get_city_context_tool(),
     ]
     system = build_system_prompt(city_breakdown.items())
     return tools, system
@@ -151,7 +152,7 @@ def api_chat(
     payload: ChatRequest,
     request: Request,
     conn=Depends(get_db),
-    client=Depends(get_llm_client),
+    model=Depends(get_model),
     ip_limiter=Depends(get_per_ip_limiter),
     daily=Depends(get_daily_cap),
 ):
@@ -164,7 +165,7 @@ def api_chat(
 
     return handle_message(
         conn,
-        client,
+        model,
         tools,
         system,
         payload.message,
@@ -180,7 +181,7 @@ def api_chat_stream(
     request: Request,
     history: str = "[]",
     conn=Depends(get_db),
-    client=Depends(get_llm_client),
+    model=Depends(get_model),
     ip_limiter=Depends(get_per_ip_limiter),
     daily=Depends(get_daily_cap),
 ):
@@ -199,7 +200,7 @@ def api_chat_stream(
     def event_stream():
         for event in stream_message(
             conn,
-            client,
+            model,
             tools,
             system,
             message,

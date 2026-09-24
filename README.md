@@ -23,6 +23,8 @@ Copy `.env.example` to `.env` and fill in real values.
 | `RATE_LIMIT_PER_HOUR` | No (default `10`) | Per-IP chat message cap, per hour. |
 | `DAILY_MESSAGE_CAP` | No (default `300`) | Site-wide chat message cap, per calendar day — the real ceiling, since it holds regardless of how many IPs appear. |
 | `GOOGLE_PLACES_API_KEY` | Only for the offline scripts | Never loaded by the web app — see below. |
+| `LANGSMITH_API_KEY` | No | Enables LangSmith tracing when set — see "Observability" below. |
+| `LANGSMITH_PROJECT` | No (default `travel-agent`) | LangSmith project name traces are grouped under. Only meaningful if `LANGSMITH_API_KEY` is set. |
 
 ## Google API keys
 
@@ -42,6 +44,26 @@ them up — each must be restricted to only its own API.
 
 Also set an API **quota limit** (not just a billing alert — see "Spend limits" below) on the
 Maps JavaScript API, since the browser key is necessarily public.
+
+## Observability (optional)
+
+Setting `LANGSMITH_API_KEY` turns on [LangSmith](https://smith.langchain.com) tracing for
+every chat turn — no other configuration needed, and no LangChain dependency is added
+anywhere in the app. With it set:
+
+- Each visitor message produces one connected trace: the turn (`handle_message` /
+  `stream_message`) → the underlying model calls → each tool call (`resolve_tool_call`) →
+  RAG retrieval (`rag_search`, when `get_city_context` fires) → the final answer. Token
+  counts and latency are recorded per step.
+- Traces are grouped under `LANGSMITH_PROJECT` (defaults to `travel-agent`).
+
+Leave `LANGSMITH_API_KEY` unset for no tracing at all — the app behaves identically either
+way, and nothing else needs to change.
+
+**Privacy note:** tracing sends prompt/response content to LangSmith's cloud, including the
+system prompt's full saved-city inventory and any diary excerpts retrieved via RAG. Treat
+`LANGSMITH_API_KEY` with the same care as the other keys in this table, and only enable
+tracing in environments where sending that content off-server is acceptable.
 
 ## Running the import
 

@@ -21,6 +21,9 @@ def _base_env(monkeypatch):
         "STORY_INDEX_PATH",
         "RATE_LIMIT_PER_HOUR",
         "DAILY_MESSAGE_CAP",
+        "LANGSMITH_API_KEY",
+        "LANGSMITH_PROJECT",
+        "LANGSMITH_TRACING",
     ):
         monkeypatch.delenv(key, raising=False)
     import os
@@ -96,6 +99,54 @@ def test_missing_required_variable_raises_naming_it(monkeypatch, tmp_path, missi
 
     assert result.returncode != 0
     assert missing in result.stderr
+
+
+def test_langsmith_settings_default_to_absent(monkeypatch, tmp_path):
+    env = {**_base_env(monkeypatch), **REQUIRED_ENV}
+
+    result = _run(
+        env,
+        "from app.config import settings\n"
+        "print(settings.langsmith_api_key, settings.langsmith_project)",
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "None travel-agent"
+
+
+def test_langsmith_key_present_enables_tracing_env_var(monkeypatch, tmp_path):
+    env = {**_base_env(monkeypatch), **REQUIRED_ENV, "LANGSMITH_API_KEY": "ls_test"}
+
+    result = _run(
+        env,
+        "import os\n"
+        "from app.config import settings\n"
+        "print(settings.langsmith_api_key, os.environ.get('LANGSMITH_TRACING'))",
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ls_test true"
+
+
+def test_langsmith_project_is_overridable(monkeypatch, tmp_path):
+    env = {
+        **_base_env(monkeypatch),
+        **REQUIRED_ENV,
+        "LANGSMITH_API_KEY": "ls_test",
+        "LANGSMITH_PROJECT": "my-custom-project",
+    }
+
+    result = _run(
+        env,
+        "from app.config import settings\n"
+        "print(settings.langsmith_project)",
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "my-custom-project"
 
 
 def test_settings_object_has_no_places_api_key_field(monkeypatch, tmp_path):

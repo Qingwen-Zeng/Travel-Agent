@@ -9,3 +9,10 @@ _REQUIRED_DEFAULTS = {
 
 for _key, _value in _REQUIRED_DEFAULTS.items():
     os.environ.setdefault(_key, _value)
+
+# Force tracing off regardless of the developer's own shell environment. If a real
+# LANGSMITH_API_KEY happens to be set globally, app.config's own startup logic would
+# otherwise flip LANGSMITH_TRACING on (via setdefault) and @traceable would attempt
+# real network calls during a test run — direct assignment here runs first and wins,
+# since app.config only ever uses setdefault for this variable.
+os.environ["LANGSMITH_TRACING"] = "false"
