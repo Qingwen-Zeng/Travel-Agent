@@ -42,8 +42,29 @@ def tool_call_response(tool_name, tool_input, tool_id="toolu_1"):
     )
 
 
+def multi_tool_call_response(calls, msg_id="ai-multi"):
+    """A single AIMessage with several tool calls at once — the model can legitimately
+    do this in one turn, and LangGraph's ToolNode runs them in parallel. `calls` is a
+    list of (tool_name, tool_input, tool_id) tuples."""
+    return AIMessage(
+        content="",
+        id=msg_id,
+        tool_calls=[
+            ToolCall(name=name, args=args, id=tool_id) for name, args, tool_id in calls
+        ],
+    )
+
+
 def text_response(text, msg_id="ai-final"):
     return AIMessage(content=text, id=msg_id)
+
+
+def block_content_response(text, msg_id="ai-final"):
+    """The real Anthropic API can deliver content as a list of content blocks
+    (e.g. [{"type": "text", "text": "...", "index": 0}]) rather than a plain string —
+    FakeMessagesListChatModel's usual plain-string content never exercises that shape,
+    so tests that need to guard against it use this instead."""
+    return AIMessage(content=[{"type": "text", "text": text, "index": 0}], id=msg_id)
 
 
 class FakeEmbedder:

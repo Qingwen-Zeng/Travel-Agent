@@ -10,6 +10,8 @@ from tests.fakes import (
     BindableFakeModel,
     CountingFakeModel,
     FakeEmbedder,
+    block_content_response as _block_content_response,
+    multi_tool_call_response as _multi_tool_call_response,
     text_response as _text_response,
     tool_call_response as _tool_call_response,
 )
@@ -66,6 +68,22 @@ def test_no_tool_call_produces_text_and_no_map(tmp_path):
 
     assert result == {"text": "General travel advice."}
     assert "map" not in result
+
+
+def test_block_list_content_is_extracted_as_plain_text(tmp_path):
+    # Regression test: the real Anthropic API can deliver a message's content as a
+    # list of content blocks (e.g. [{"type": "text", "text": "...", "index": 0}])
+    # rather than a plain string. Caught live: app/chat.py used to read `.content`
+    # directly, so the response text ended up being that raw list — harmless in
+    # handle_message's dict, but in stream_message it made app.js's `assistantText +=
+    # data.text` coerce the array to "[object Object]" for every chunk.
+    conn = get_writable_connection(tmp_path / "travel.db")
+    _seed_zurich(conn)
+    model = BindableFakeModel(responses=[_block_content_response("General travel advice.")])
+
+    result = handle_message(conn, model, _zurich_tools(), system="sys", message="hi", history=[])
+
+    assert result == {"text": "General travel advice."}
 
 
 def test_tool_call_without_categories_shows_every_category(tmp_path):
@@ -286,6 +304,24 @@ def test_stream_no_tool_call_yields_deltas_then_done(tmp_path):
     assert delta_text == "General travel advice."
     assert events[-1] == {"type": "done"}
     assert not any(e["type"] == "map" for e in events)
+
+
+def test_stream_block_list_content_is_extracted_as_plain_text(tmp_path):
+    # Streaming counterpart of test_block_list_content_is_extracted_as_plain_text —
+    # this is the one that actually produced visible "[object Object]" spam in the
+    # browser, since app.js appends each streamed delta's text directly.
+    conn = get_writable_connection(tmp_path / "travel.db")
+    _seed_zurich(conn)
+    model = BindableFakeModel(responses=[_block_content_response("General travel advice.")])
+
+    events = list(
+        stream_message(conn, model, _zurich_tools(), system="sys", message="hi", history=[])
+    )
+
+    delta_text = "".join(e["text"] for e in events if e["type"] == "delta")
+    assert delta_text == "General travel advice."
+    assert "object Object" not in delta_text
+    assert events[-1] == {"type": "done"}
 
 
 def test_stream_tool_call_without_categories_shows_every_category(tmp_path):
@@ -836,3 +872,46 @@ def test_stream_chained_context_then_map_tool_calls_yields_map_event(tmp_path):
     assert map_event["map"]["city"] == "Zurich"
     assert events[-1] == {"type": "done"}
     assert len(model.calls) == 3
+
+
+def test_stream_two_tool_calls_in_one_turn_yields_map_event(tmp_path):
+    # Regression test: the model can legitimately put more than one tool call in a
+    # single turn (one AIMessage), not just sequential separate turns like the test
+    # above. LangGraph's ToolNode then runs them in parallel, and when more than one
+    # returns a Command, the "tools" node's update in stream_mode="updates" arrives as
+    # a LIST of separate partial-update dicts rather than one merged dict — a real
+    # crash caught live against the actual Anthropic API (AttributeError: 'list' object
+    # has no attribute 'get'), never hit by the sequential-calls tests above because
+    # FakeMessagesListChatModel scripts always used one tool_call per AIMessage there.
+    conn = get_writable_connection(tmp_path / "travel.db")
+    _seed_zurich(conn)
+    story_index, embedder = _seed_story_index(conn)
+    model = CountingFakeModel(
+        responses=[
+            _multi_tool_call_response(
+                [
+                    ("get_city_context", {"query": "Tokyo food"}, "toolu_1"),
+                    ("show_city_map", {"city": "Zurich"}, "toolu_2"),
+                ]
+            ),
+            _text_response("Here's Zurich, with some diary color too."),
+        ]
+    )
+
+    events = list(
+        stream_message(
+            conn,
+            model,
+            _zurich_tools(),
+            system="sys",
+            message="tell me about Zurich food and show me the map",
+            history=[],
+            story_index=story_index,
+            embedder=embedder,
+        )
+    )
+
+    map_event = next(e for e in events if e["type"] == "map")
+    assert map_event["map"]["city"] == "Zurich"
+    assert events[-1] == {"type": "done"}
+    assert len(model.calls) == 2  # one turn producing both tool calls, then the final answer

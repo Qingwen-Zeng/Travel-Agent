@@ -69,7 +69,10 @@ def handle_message(
     except GraphRecursionError:
         return {"text": FALLBACK_TEXT}
 
-    output = {"text": result["messages"][-1].content}
+    # .text, not .content: Anthropic can return content as a list of blocks (e.g.
+    # [{"type": "text", "text": "...", "index": 0}]) rather than a plain string;
+    # .text is LangChain's own normalized accessor, a plain string either way.
+    output = {"text": result["messages"][-1].text}
     if result.get("map_payload") is not None:
         output["map"] = result["map_payload"]
     return output
@@ -99,12 +102,23 @@ def stream_message(
         ):
             if chunk["type"] == "messages":
                 message_chunk, metadata = chunk["data"]
-                if metadata.get("langgraph_node") == "call_model" and message_chunk.content:
-                    yield {"type": "delta", "text": message_chunk.content}
+                # message_chunk.content is not always a plain string — Anthropic's
+                # streaming API can deliver it as a list of content blocks (e.g.
+                # [{"type": "text", "text": "...", "index": 0}]). `.text` is
+                # LangChain's own normalized accessor: a plain string either way.
+                if metadata.get("langgraph_node") == "call_model" and message_chunk.text:
+                    yield {"type": "delta", "text": message_chunk.text}
             elif chunk["type"] == "updates":
                 for node_update in chunk["data"].values():
-                    if node_update and node_update.get("map_payload") is not None:
-                        map_payload = node_update["map_payload"]
+                    # When a node runs multiple tool calls in parallel (the model can
+                    # legitimately emit more than one tool_calls entry in a single
+                    # AIMessage) and more than one of them returns a Command, LangGraph
+                    # reports that node's update as a LIST of separate partial-update
+                    # dicts instead of one merged dict — normalize both shapes here.
+                    updates = node_update if isinstance(node_update, list) else [node_update]
+                    for update in updates:
+                        if update and update.get("map_payload") is not None:
+                            map_payload = update["map_payload"]
     except GraphRecursionError:
         yield {"type": "delta", "text": FALLBACK_TEXT}
         yield {"type": "done"}

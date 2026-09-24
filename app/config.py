@@ -50,11 +50,12 @@ def load_settings() -> Settings:
 load_dotenv()
 settings = load_settings()
 
-# Tracing is on whenever a key is configured — no separate opt-in toggle. The
-# LangSmith SDK reads these itself from the environment (inside wrap_anthropic /
-# @traceable in app/llm.py, app/chat.py, app/rag.py), so this is the one place
-# that translates "a key is present" into the SDK's own on/off switch.
-# setdefault, not direct assignment, so a real deployment env var still wins.
+# Tracing is on whenever a key is configured — no separate opt-in toggle. LangGraph
+# and ChatAnthropic trace automatically through LangChain's own callback machinery,
+# which reads LANGSMITH_TRACING/LANGSMITH_PROJECT from the environment itself — no
+# manual wrapping anywhere in app/. This is the one place that translates "a key is
+# present" into that SDK's on/off switch. setdefault, not direct assignment, so a
+# real deployment env var still wins.
 if settings.langsmith_api_key:
     os.environ.setdefault("LANGSMITH_TRACING", "true")
     os.environ.setdefault("LANGSMITH_PROJECT", settings.langsmith_project)
