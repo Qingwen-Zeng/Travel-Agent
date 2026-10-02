@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel
 
 from app.agent import build_get_city_context_tool, build_show_city_map_tool
@@ -32,9 +32,9 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 # LangSmith tracing is fully automatic here whenever LANGSMITH_API_KEY is set (see
-# app/config.py) — ChatAnthropic and the LangGraph agent trace through the standard
-# LangChain callback machinery, no manual wrapping needed.
-_model = ChatAnthropic(model=settings.llm_model, api_key=settings.llm_api_key, max_tokens=MAX_TOKENS)
+# app/config.py) — ChatGoogleGenerativeAI and the LangGraph agent trace through the
+# standard LangChain callback machinery, no manual wrapping needed.
+_model = ChatGoogleGenerativeAI(model=settings.llm_model, api_key=settings.llm_api_key, max_tokens=MAX_TOKENS)
 _per_ip_limiter = PerIPRateLimiter(limit=settings.rate_limit_per_hour, window_seconds=3600)
 _daily_cap = DailyMessageCap(limit=settings.daily_message_cap)
 _story_embedder = SentenceTransformerEmbedder()

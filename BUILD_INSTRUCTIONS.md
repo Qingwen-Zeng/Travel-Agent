@@ -39,7 +39,8 @@ The reply is prose **plus** an interactive Google Map with those spots pinned on
 | Database | SQLite (WAL mode) |
 | Map | Google Maps JavaScript API with Advanced Markers |
 | Geocoding & place data | Google Places API (New) — Text Search at import time for coordinates (Step 3), Place Details + Photo Media later, offline, for ratings/contact/photos (Step 16) |
-| AI | One LLM API (Anthropic) with tool calling |
+| AI | Anthropic's Claude, called via LangGraph + `langchain-anthropic`'s `ChatAnthropic` (a real agent framework, replacing the original hand-rolled tool-calling loop — see Step 20) |
+| Observability | LangSmith — fully automatic once `LANGSMITH_API_KEY` is set, via LangGraph/LangChain's own tracing (Step 20). No manual instrumentation anywhere in `app/`. |
 | Semantic retrieval | FAISS (local index) + `sentence-transformers` (local embeddings) |
 | Rate limiting | Hand-rolled in-process limiters (`app/limits.py`) — no third-party rate-limiting library was needed |
 | Deployment | Docker image → VPS behind Caddy |
@@ -65,6 +66,15 @@ ephemeral multi-conversation sidebar (Step 18), and clickable spot names in repl
 when" shape as every other step, added at the end rather than renumbering the steps
 before them.
 
+**Step 20 was likewise not part of the original plan.** The original twelve steps
+deliberately avoided an agent framework (see Step 7's "Client" section, now superseded)
+in favor of a small hand-rolled tool-calling loop — the right call while the app had one
+provider and two tools. Step 20 documents migrating that loop to a real one,
+[LangGraph](https://langchain-ai.github.io/langgraph/), once "meet the standard coding
+of an AI agent" became an explicit goal, plus wiring up LangSmith tracing now that a
+LangSmith API key exists. It follows the same "Goal / Files / Design / Acceptance tests
+/ Done when" shape as every other step.
+
 ---
 
 ## Repository layout
@@ -80,8 +90,9 @@ travel-agent/
 │   ├── queries.py           all SQL reads
 │   ├── maps.py              map payload construction
 │   ├── geo.py               haversine distance + radius filtering
-│   ├── llm.py               LLM client + tool definitions + system prompt
-│   ├── chat.py              chat orchestration (the agent loop)
+│   ├── llm.py               system prompt + tool name constants (Step 20)
+│   ├── agent.py             LangGraph agent: state, tools, graph (Step 20)
+│   ├── chat.py              drives the compiled graph for a turn (Step 20)
 │   ├── rag.py               story embedding + FAISS index build/search
 │   ├── limits.py            rate limiting
 │   ├── main.py              FastAPI app, routes
@@ -113,9 +124,11 @@ travel-agent/
 │   ├── test_geo.py
 │   ├── test_rag.py
 │   ├── test_llm.py
+│   ├── test_agent.py         Step 20
 │   ├── test_chat.py
 │   ├── test_limits.py
-│   └── test_main.py
+│   ├── test_main.py
+│   └── fakes.py               shared LangGraph test doubles (Step 20)
 ├── Dockerfile
 ├── Caddyfile
 ├── requirements.txt
@@ -149,7 +162,9 @@ Every step below states its acceptance tests. Those are the minimum, not the max
 `requirements.txt` pins: `fastapi`, `uvicorn[standard]`, `jinja2`, `python-dotenv`,
 `requests`, `anthropic` (the LLM provider SDK), and `pytest`. (No rate-limiting
 library — Step 11's limiters are hand-rolled. `faiss-cpu` and `sentence-transformers`
-are added later, in Step 13, only once semantic retrieval exists.)
+are added later, in Step 13, only once semantic retrieval exists. `langgraph`,
+`langchain-anthropic`, and `langsmith` are added later still, in Step 20, once the
+agent loop is rebuilt on a real framework.)
 
 ### Configuration
 
@@ -166,6 +181,8 @@ setting is required except where a default is given.
 | `RATE_LIMIT_PER_HOUR` | per-IP message cap (default 10) |
 | `DAILY_MESSAGE_CAP` | site-wide message cap per day (default 300) |
 | `STORY_INDEX_PATH` | path to the FAISS index file (default `stories.faiss`) — added in Step 13, not part of the initial skeleton |
+| `LANGSMITH_API_KEY` | optional; enables automatic LangGraph/LangChain tracing when set — added in Step 20, not part of the initial skeleton |
+| `LANGSMITH_PROJECT` | LangSmith project name traces are grouped under (default `travel-agent`) — added in Step 20 |
 
 `GOOGLE_PLACES_API_KEY` is **not** in this list. It belongs to the offline scripts only
 (Step 3's importer, and Step 16's enrichment script) and must never be loaded by the web
@@ -620,6 +637,16 @@ windows — verified live once wired into the Step 9 chat page.
 
 # Step 7 — LLM client and tool definition
 
+**The "Client" section below, and the hand-built JSON-schema tool description it pairs
+with, are superseded by Step 20.** The hand-rolled `AnthropicClient`/`Client` Protocol
+design shipped and worked, but was later replaced by a LangGraph agent built on
+`langchain-anthropic`'s `ChatAnthropic`, with the tool itself moved to `app/agent.py` and
+built with a dynamic Pydantic schema instead of a hand-written JSON Schema dict. This
+section is kept because the tool's **behavior** — name, description, trigger condition,
+the `city`/`categories` enum guardrail, `search_query`'s map-suppressing precedence over
+`categories` — is unchanged; only the mechanism that enforces it changed. The "System
+prompt" section below is entirely unchanged and still accurate.
+
 **Goal:** a thin wrapper over the LLM API that can be stubbed in tests.
 
 **Files:** `app/llm.py`
@@ -695,6 +722,16 @@ provider-agnostic abstraction layer; one provider, one thin wrapper.
 ---
 
 # Step 8 — Chat orchestration
+
+**The "Sequence" section below describes the original hand-rolled loop, superseded by
+Step 20's LangGraph `StateGraph`.** Every guarantee it lists still holds — no map on a
+`search_query` call, coordinates stripped from what the model sees, history capped
+before sending — but the mechanism changed: the loop-with-a-`MAX_TOOL_CALLS_PER_TURN`
+ceiling described below is now a compiled graph with a `recursion_limit`, and the
+coordinate-stripping split (tool result text vs. the retained rows for the map) is now
+done via a LangGraph `Command` update to graph state rather than a bespoke tuple return.
+The "Acceptance tests" section's *assertions* are still exactly what to test; only "a
+stub LLM client" should be read as "a fake LangChain chat model" (see Step 20).
 
 **Goal:** the feature. Turn a visitor's message into prose plus, when the model decides,
 a map.
@@ -1319,6 +1356,151 @@ always opens that same spot's detail view.
 
 ---
 
+# Step 20 — Migrate to LangGraph; add LangSmith tracing
+
+**Goal:** replace the hand-rolled tool-calling loop (Step 7's "Client", Step 8's
+"Sequence") with a real agent framework, and get automatic tracing of every model call
+and tool call with no manual instrumentation.
+
+**Files:** `app/agent.py` (new), `app/llm.py` (trimmed), `app/chat.py` (rewritten on top
+of the graph), `app/main.py`, `app/db.py`, `requirements.txt`, `tests/fakes.py` (new),
+`tests/test_agent.py` (new), `tests/test_chat.py`, `tests/test_llm.py`, `tests/test_main.py`
+
+### Why
+
+The original design deliberately avoided a framework — one provider, two tools, a
+30-line loop was simpler and had fewer dependencies to trust. That trade-off changed
+once "use a real agent framework" became an explicit goal and a LangSmith key was
+already in hand: LangGraph gives the same behavior with a framework-native mechanism for
+the app's one genuinely delicate property (never letting the model see a coordinate),
+plus tracing for free.
+
+### Design
+
+- **`app/agent.py`** holds the graph. `AgentState` is a `TypedDict` with `messages:
+  Annotated[list, add_messages]` and `map_payload: Optional[dict]` — the same
+  text/map split Step 8 always returned, now carried as graph state instead of a
+  function's return tuple.
+- **The `city`/`categories` enum guardrail is preserved, and strengthened.** Each tool is
+  still built fresh per request from the live database (`build_show_city_map_tool(cities,
+  categories, countries)`, `build_get_city_context_tool()`), using a dynamically
+  constructed Pydantic model (`pydantic.create_model` with `Literal[tuple(values)]`
+  fields) instead of a hand-written JSON Schema `enum`. An unknown city is now rejected by
+  Pydantic validation inside `ToolNode` itself and fed back to the model as a normal,
+  correctable tool error — an improvement over the old design, which was never actually
+  exercised against an invalid value.
+- **Coordinate-stripping now happens via `Command`, not a tuple return.** Each tool
+  function returns `Command(update={"messages": [ToolMessage(content=...,
+  tool_call_id=...)], "map_payload": ...})`. The `ToolMessage` content the model receives
+  contains only title/note/category (`get_city_context` never sets `map_payload` at all,
+  same as before); the full coordinate-bearing rows only ever reach `map_payload`, a
+  field the model's message list never touches. This is the same safety property as Step
+  8, implemented with the framework's own state-update mechanism instead of a bespoke
+  tuple.
+- **`ToolRuntime[AgentContext, AgentState]`** injects the read-only `conn`, `story_index`,
+  and `embedder` into each tool function via `runtime.context` — the equivalent of the
+  extra parameters the old `_resolve_tool_call` took directly.
+- **The graph shape:** `call_model` → (`tools_condition`) → `tools` → back to
+  `call_model`, or `END` once the model replies with no tool call. `model.bind_tools(tools)`
+  must be called explicitly before building the `call_model` node — LangGraph does not do
+  this for you, and a fake test model will happily return canned responses whether or not
+  it was called, so this gap is invisible to tests and must be checked by hand (it was
+  missed once during implementation and caught only by reasoning through what a real
+  `ChatAnthropic` would receive, not by any test failing).
+- **`recursion_limit` replaces `MAX_TOOL_CALLS_PER_TURN`.** Each full tool-call round is
+  two graph steps (`call_model` + `tools`); `app/chat.py` sets `RECURSION_LIMIT = 2 * 4 +
+  1` to match the old cap of 4 rounds, with the `+1` covering the final answer-only
+  `call_model` step that ends the turn. A runaway model that never stops calling tools
+  raises `GraphRecursionError` once the budget is exhausted; both `handle_message` and
+  `stream_message` catch it and degrade to a fixed fallback message rather than hanging
+  or crashing.
+- **`app/chat.py` keeps its exact existing signatures and return/yield shapes** — `{"text":
+  ...}` / `{"text": ..., "map": ...}` from `handle_message`, and the same `delta`/`map`/
+  `done` SSE event dicts from `stream_message`. `app/main.py`'s routes needed no contract
+  changes.
+- **`.text`, not `.content`, when reading a model message.** The real Anthropic API can
+  return `.content` as a list of content blocks (e.g. `[{"type": "text", "text": "...",
+  "index": 0}]`) rather than a plain string. LangChain's `.text` property normalizes
+  either shape to a plain string; reading `.content` directly renders as `[object
+  Object]` in the browser once a reply happens to arrive as blocks instead of a string —
+  this is a real bug that reached the running app (see "Bugs found after initial
+  deployment" below) before both `handle_message` and `stream_message` were fixed to use
+  `.text` everywhere a model message is read.
+- **`sqlite3.connect(..., check_same_thread=False)`** is now required in both
+  `get_readonly_connection` and `get_writable_connection` (`app/db.py`). LangGraph's
+  `ToolNode` runs tool calls in a worker thread pool, handing the request's connection to
+  a different OS thread than the one that opened it — without this flag, SQLite raises
+  immediately. This was also a real bug caught only by running the graph, not by reading
+  the LangGraph docs.
+- **LangSmith tracing is fully automatic.** Once `ChatAnthropic`/LangGraph are the code
+  path, tracing happens through LangChain's own callback machinery reading
+  `LANGSMITH_TRACING`/`LANGSMITH_API_KEY`/`LANGSMITH_PROJECT` from the environment — no
+  `@traceable` decorator, no `wrap_anthropic()`, no manual instrumentation anywhere in
+  `app/`. `LANGSMITH_PROJECT` must match the project name shown in the LangSmith UI
+  exactly (it is case-sensitive) — if unset, traces still work but land in the default
+  project named `"travel-agent"`, which reads as "tracing doesn't work" if the UI is
+  pointed at a differently-named or differently-cased project.
+
+### Bugs found after initial deployment
+
+Both were caught from real traffic, not from the test suite, and both now have
+regression tests:
+
+- **Parallel-tool-call state-update shape.** When a single model turn issues more than
+  one `Command`-returning tool call at once (`ToolNode` runs them in parallel), LangGraph
+  reports that node's state update as a **list** of partial-update dicts under
+  `stream_mode="updates"`, not a single merged dict — `stream_message` crashed reading
+  `node_update.get(...)` on a list. Fixed by normalizing both shapes before reading
+  `map_payload`. Regression test:
+  `test_stream_two_tool_calls_in_one_turn_yields_map_event` in `tests/test_chat.py`.
+- **Content-block-list rendering.** See the `.text`-vs-`.content` bug above. Regression
+  tests: `test_block_list_content_is_extracted_as_plain_text` and
+  `test_stream_block_list_content_is_extracted_as_plain_text` in `tests/test_chat.py`.
+
+### Testing
+
+`FakeMessagesListChatModel` (from `langchain_core.language_models.fake_chat_models`)
+replaces the old hand-rolled `StubClient`/`StubStreamClient` — it cycles through a
+scripted list of `AIMessage`s per call. It does not implement `bind_tools()` by default
+(the base class raises `NotImplementedError`), so every fake used in tests is built on a
+small `BindableFakeModel` subclass in `tests/fakes.py` that overrides `bind_tools()` to
+return `self` and record what it was bound with; `CountingFakeModel` additionally
+records the message list passed to every `invoke()` call, the equivalent of the old
+`StubClient.calls`. `tests/test_agent.py` is new and tests the two tools directly
+(schema-level enum constraints, dispatch logic, coordinate-stripping) independent of the
+graph; `tests/test_chat.py`, `tests/test_llm.py`, and `tests/test_main.py` were rewritten
+on the new fakes with every prior *behavioral* assertion (Step 8's acceptance tests,
+Step 7's tool description, Step 9's SSE shape) carried over unchanged.
+
+### Acceptance tests
+
+- Every acceptance test listed under Step 8 still passes, unchanged in what it asserts.
+- An invalid `city`/`categories` value is rejected before the tool body runs, and the
+  model receives a correctable error rather than the tool silently running with bad
+  input.
+- A single model turn with two parallel `Command`-returning tool calls still yields
+  exactly one `map` SSE event with the correct payload.
+- A reply whose `.content` arrives as a list of content blocks still renders as plain
+  text, never `[object Object]`, in both `handle_message` and `stream_message`.
+- A tool call made from `ToolNode`'s worker thread pool succeeds against both the
+  read-only and writable SQLite connections.
+- With `LANGSMITH_TRACING` unset (the offline test default from `tests/conftest.py`), the
+  full suite still makes zero network calls.
+
+### Done when
+
+- The full suite passes with zero network calls, and the model can no longer receive a
+  tool schema without `categories`/`city` enums — verified via `fake.bound_tools`
+  inspecting the real schema built from the live test database.
+- A live run against the real Anthropic API (manual, needs `LLM_API_KEY`) streams
+  token-by-token, chains `get_city_context` → `show_city_map` in one turn within the
+  configured `recursion_limit`, and a LangSmith trace for that run appears automatically
+  in the correct project with no manual instrumentation.
+- The two bugs above are fixed and cannot regress silently — both have a named test in
+  `tests/test_chat.py`.
+
+---
+
 ## Verification checklist
 
 Confirm each before considering the project complete.
@@ -1359,4 +1541,19 @@ Confirm each before considering the project complete.
       cleared).
 - [ ] Clickable spot names in replies only ever reference spots already present in an
       already-rendered map payload — they introduce no new coordinate source.
+- [ ] An unknown `city`/`categories` value is rejected by the tool's Pydantic schema, not
+      silently accepted or passed through to a query.
+- [ ] The coordinate-stripping property (no `lat`/`lng` in what the model sees) holds via
+      `app/agent.py`'s `Command` update, verified by a real test, not just by inspection.
+- [ ] Both SQLite connection helpers in `app/db.py` open with `check_same_thread=False` —
+      required for `ToolNode`'s worker thread pool.
+- [ ] `stream_message` reads a model message via `.text`, never `.content` directly, and
+      normalizes a node's state update whether LangGraph reports it as a dict or a list of
+      dicts (parallel `Command`-returning tool calls).
+- [ ] `app/agent.py`'s `build_graph` calls `model.bind_tools(tools)` before the model is
+      ever invoked — a fake test model tolerates its absence silently, so this must be
+      checked by reading the code, not inferred from a passing test suite.
+- [ ] LangSmith tracing is fully automatic (no `@traceable`, no `wrap_anthropic()`
+      anywhere in `app/`), and `LANGSMITH_PROJECT` matches the project name in the
+      LangSmith UI exactly, including case.
 - [ ] The full test suite passes with no network access.
