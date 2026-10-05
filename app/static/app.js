@@ -244,8 +244,8 @@
 
     frameMap(entry, libs, spots);
 
-    // Exposed so a spot name clicked inline in the chat text (see
-    // linkifySpotMentions) can jump straight to this spot's detail view.
+    // Exposed so a spot card clicked below the chat text (see renderSpotCards) can
+    // jump straight to this spot's detail view.
     container.selectSpot = showDetail;
   }
 
@@ -282,48 +282,123 @@
     return mapContainer;
   }
 
-  // Finds the first plain-text occurrence of a spot's title inside `root` (an assistant
-  // chat bubble) and replaces it with a clickable button, leaving the rest of the text
-  // untouched. Skips text already inside a previous spot link (or a <code> span) so
-  // overlapping titles (e.g. "Bar" inside "Wine Bar") can't be double-linked.
-  function linkifyFirstSpotMention(root, title, spotIndex) {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    let node = walker.nextNode();
-    while (node) {
-      const parent = node.parentElement;
-      const skip = parent && parent.closest(".spot-name-link, code");
-      const idx = skip ? -1 : node.nodeValue.toLowerCase().indexOf(title.toLowerCase());
-      if (idx !== -1) {
-        const text = node.nodeValue;
-        const before = text.slice(0, idx);
-        const match = text.slice(idx, idx + title.length);
-        const after = text.slice(idx + title.length);
+  // --- Spot mention cards ---
+  //
+  // The old approach wrapped the first *exact* occurrence of a spot's full saved title
+  // inside the reply text. That silently failed for most real replies: the model almost
+  // never reproduces a DB title verbatim — it drops bracketed native-language alt names
+  // ("Zi Lin Steamed Dumpling (頂好紫琳蒸餃館)" vs the model's "Zi Lin Steamed Dumpling"),
+  // or rephrases a branch qualifier ("Din Tai Fung Xinyi Branch" vs the DB's "Din Tai
+  // Fung (Xinyi)"). Exact substring matching can never be made to guarantee a link for
+  // every spot the model actually discusses, since the model's wording isn't ours to
+  // control. Instead: the system prompt already asks the model to **bold** every spot
+  // name it mentions, so every <strong> segment in the rendered reply is a candidate —
+  // matched against the real spot list by significant-word overlap (not an exact
+  // string), which survives both of the real failure cases above.
 
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "spot-name-link";
-        button.dataset.spotIndex = String(spotIndex);
-        button.textContent = match;
+  const SPOT_CARD_BADGE_COLORS = ["#D9381E", "#2747A8", "#5B2BB5", "#8E6B00", "#1E7A64", "#B8301A"];
 
-        const afterNode = document.createTextNode(after);
-        node.nodeValue = before;
-        parent.insertBefore(button, node.nextSibling);
-        parent.insertBefore(afterNode, button.nextSibling);
-        return;
-      }
-      node = walker.nextNode();
-    }
+  function normalizeForMatch(text) {
+    return text
+      .toLowerCase()
+      .replace(/[‘’]/g, "'")
+      .replace(/[“”]/g, '"')
+      .replace(/[–—]/g, "-")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
-  // Makes the first mention of each spot's name inside an assistant reply clickable,
-  // so clicking it opens that spot's detail view on the map below — the same result as
-  // clicking it in the map's own list. Longest titles first, so a shorter spot's name
-  // that happens to be a substring of a longer one (already linked) is left alone.
-  function linkifySpotMentions(bubbleEl, spots) {
-    spots
-      .map((spot, i) => ({ title: spot.title, i }))
-      .sort((a, b) => b.title.length - a.title.length)
-      .forEach(({ title, i }) => linkifyFirstSpotMention(bubbleEl, title, i));
+  function significantWords(text) {
+    return normalizeForMatch(text)
+      .replace(/[^\w\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 2);
+  }
+
+  // Finds, for each bolded phrase in `bubbleEl`, the best-matching real spot (if any
+  // clears the confidence threshold) — in order of first appearance, deduped by spot.
+  function findMentionedSpots(bubbleEl, spots) {
+    const SCORE_THRESHOLD = 0.6;
+    const seen = new Set();
+    const matches = [];
+    bubbleEl.querySelectorAll("strong").forEach((strongEl) => {
+      const candidate = strongEl.textContent;
+      const candidateWords = new Set(significantWords(candidate));
+      if (candidateWords.size === 0) return;
+
+      let best = null;
+      let bestScore = 0;
+      spots.forEach((spot, index) => {
+        const stripped = spot.title.replace(/\s*\([^)]*\)\s*$/, "").trim();
+        [spot.title, stripped].forEach((variant) => {
+          const variantWords = significantWords(variant);
+          if (variantWords.length === 0) return;
+          const shared = variantWords.filter((w) => candidateWords.has(w)).length;
+          const score = shared / variantWords.length;
+          if (score > bestScore) {
+            bestScore = score;
+            best = index;
+          }
+        });
+      });
+
+      if (best !== null && bestScore >= SCORE_THRESHOLD && !seen.has(best)) {
+        seen.add(best);
+        matches.push(best);
+      }
+    });
+    return matches;
+  }
+
+  function buildSpotCard(spot, spotIndex, orderNumber) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "spot-card";
+    button.dataset.spotIndex = String(spotIndex);
+
+    const header = document.createElement("div");
+    header.className = "spot-card-header";
+    const badge = document.createElement("span");
+    badge.className = "spot-card-badge";
+    badge.style.background = SPOT_CARD_BADGE_COLORS[(orderNumber - 1) % SPOT_CARD_BADGE_COLORS.length];
+    badge.textContent = String(orderNumber);
+    const title = document.createElement("span");
+    title.className = "spot-card-title";
+    title.textContent = spot.title;
+    header.append(badge, title);
+    button.appendChild(header);
+
+    if (spot.category) {
+      const category = document.createElement("span");
+      category.className = "spot-card-category";
+      category.textContent = spot.category;
+      button.appendChild(category);
+    }
+
+    if (spot.note) {
+      const note = document.createElement("p");
+      note.className = "spot-card-note";
+      note.textContent = spot.note;
+      button.appendChild(note);
+    }
+
+    return button;
+  }
+
+  // Renders a card for each spot the reply actually names (see findMentionedSpots),
+  // inserted right after the bubble and before its map — clicking a card jumps to that
+  // spot's detail view on the map below, the same result as clicking it in the map's
+  // own list.
+  function renderSpotCards(bubbleEl, spots) {
+    const matchedIndexes = findMentionedSpots(bubbleEl, spots);
+    if (matchedIndexes.length === 0) return;
+
+    const grid = document.createElement("div");
+    grid.className = "spot-cards";
+    matchedIndexes.forEach((spotIndex, i) => {
+      grid.appendChild(buildSpotCard(spots[spotIndex], spotIndex, i + 1));
+    });
+    bubbleEl.insertAdjacentElement("afterend", grid);
   }
 
   // --- Multi-conversation state (in-memory only — nothing here ever touches a Web
@@ -338,6 +413,31 @@
 
   function conversationTitle(convo) {
     return convo.title || "New chat";
+  }
+
+  // The page scrolls as a whole now (no inner #chat-log scroll region), so "stick to
+  // the bottom as new content streams in" means scrolling the document, not an element.
+  function scrollChatToBottom() {
+    window.scrollTo(0, document.documentElement.scrollHeight);
+  }
+
+  // Cycles through the app's accent palette by list position — not derived from the
+  // conversation's content (titles are freeform first-message text, not real city
+  // codes, so faking a 3-letter airport code would just be wrong half the time).
+  const CONVERSATION_BADGE_COLORS = ["badge-coral", "badge-blue", "badge-purple", "badge-yellow", "badge-teal"];
+
+  function relativeTime(timestamp) {
+    const diffMs = Date.now() - timestamp;
+    const minutes = Math.floor(diffMs / 60000);
+    if (minutes < 1) return "Just now";
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days === 1) return "Yesterday";
+    if (days < 7) return `${days} days ago`;
+    if (days < 14) return "Last week";
+    return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   }
 
   function bindSuggestionChips(root) {
@@ -390,20 +490,20 @@
         lastAssistantBubble = appendChatBubble("assistant", entry.text);
       } else if (entry.type === "map") {
         if (lastAssistantBubble) {
-          linkifySpotMentions(lastAssistantBubble, entry.payload.markers);
+          renderSpotCards(lastAssistantBubble, entry.payload.markers);
         }
         const mapContainer = buildMapContainerElement();
         log.appendChild(mapContainer);
         await renderMapPayload(mapContainer, entry.payload);
       }
     }
-    log.scrollTop = log.scrollHeight;
+    scrollChatToBottom();
   }
 
   function renderSidebar() {
     const list = document.getElementById("conversation-list");
     list.innerHTML = "";
-    state.conversations.forEach((convo) => {
+    state.conversations.forEach((convo, index) => {
       const li = document.createElement("li");
       const button = document.createElement("button");
       button.type = "button";
@@ -412,7 +512,24 @@
         button.classList.add("conversation-item-active");
         button.setAttribute("aria-current", "true");
       }
-      button.textContent = conversationTitle(convo);
+
+      const title = conversationTitle(convo);
+      const badge = document.createElement("span");
+      badge.className = `conversation-item-badge ${CONVERSATION_BADGE_COLORS[index % CONVERSATION_BADGE_COLORS.length]}`;
+      badge.textContent = title.charAt(0).toUpperCase();
+      badge.setAttribute("aria-hidden", "true");
+
+      const body = document.createElement("span");
+      body.className = "conversation-item-body";
+      const titleEl = document.createElement("span");
+      titleEl.className = "conversation-item-title";
+      titleEl.textContent = title;
+      const metaEl = document.createElement("span");
+      metaEl.className = "conversation-item-meta";
+      metaEl.textContent = relativeTime(convo.createdAt);
+      body.append(titleEl, metaEl);
+
+      button.append(badge, body);
       button.addEventListener("click", () => switchConversation(convo.id));
       li.appendChild(button);
       list.appendChild(li);
@@ -456,6 +573,7 @@
       title: null,
       history: [],
       transcript: [],
+      createdAt: Date.now(),
     };
     state.conversations.unshift(convo);
     switchConversation(convo.id);
@@ -533,7 +651,7 @@
       bubble.textContent = text;
     }
     log.appendChild(bubble);
-    log.scrollTop = log.scrollHeight;
+    scrollChatToBottom();
     return bubble;
   }
 
@@ -565,8 +683,7 @@
           const bubble = ensureAssistantBubble();
           assistantText += data.text;
           bubble.innerHTML = renderMarkdown(assistantText);
-          const log = document.getElementById("chat-log");
-          log.scrollTop = log.scrollHeight;
+          scrollChatToBottom();
         } else if (data.type === "map") {
           mapPayload = data.map;
         } else if (data.type === "done") {
@@ -583,12 +700,12 @@
           }
 
           if (mapPayload && mapPayload.markers.length > 0) {
-            linkifySpotMentions(bubble, mapPayload.markers);
+            renderSpotCards(bubble, mapPayload.markers);
             convo.transcript.push({ type: "map", payload: mapPayload });
             const log = document.getElementById("chat-log");
             const mapContainer = buildMapContainerElement();
             log.appendChild(mapContainer);
-            log.scrollTop = log.scrollHeight;
+            scrollChatToBottom();
             renderMapPayload(mapContainer, mapPayload).then(resolve).catch(reject);
           } else {
             resolve();
@@ -669,22 +786,28 @@
     const chatLog = document.getElementById("chat-log");
     if (chatLog) {
       chatLog.addEventListener("click", (event) => {
-        const link = event.target.closest(".spot-name-link");
-        if (!link) return;
-        const bubble = link.closest(".chat-bubble-assistant");
-        if (!bubble) return;
-        let sibling = bubble.nextElementSibling;
+        const card = event.target.closest(".spot-card");
+        if (!card) return;
+        const grid = card.closest(".spot-cards");
+        if (!grid) return;
+        let sibling = grid.nextElementSibling;
         while (sibling && !sibling.classList.contains("chat-map") && !sibling.classList.contains("chat-bubble")) {
           sibling = sibling.nextElementSibling;
         }
         if (sibling && sibling.classList.contains("chat-map") && sibling.selectSpot) {
           sibling.scrollIntoView({ behavior: "smooth", block: "nearest" });
-          sibling.selectSpot(Number(link.dataset.spotIndex));
+          sibling.selectSpot(Number(card.dataset.spotIndex));
         }
       });
     }
 
-    const firstConversation = { id: crypto.randomUUID(), title: null, history: [], transcript: [] };
+    const firstConversation = {
+      id: crypto.randomUUID(),
+      title: null,
+      history: [],
+      transcript: [],
+      createdAt: Date.now(),
+    };
     state.conversations.push(firstConversation);
     state.activeId = firstConversation.id;
     renderSidebar();
@@ -693,6 +816,22 @@
     if (newChatButton) {
       newChatButton.addEventListener("click", () => createConversation());
     }
+
+    // The logo/wordmark (sidebar, and the mobile-only header) acts like "New chat" —
+    // but only when the current conversation actually has messages. Otherwise it would
+    // spam a fresh empty conversation into "Recent trips" every time someone clicks the
+    // logo while already sitting on an unstarted chat; just treat that as "go to the
+    // main page" (a no-op, since an unstarted conversation already shows it).
+    document.querySelectorAll(".sidebar-brand, .brand-mark").forEach((link) => {
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        if (activeConversation().transcript.length === 0) {
+          closeMobileSidebar();
+          return;
+        }
+        createConversation();
+      });
+    });
 
     const sidebarToggle = document.getElementById("sidebar-toggle");
     const appLayout = document.querySelector(".app-layout");

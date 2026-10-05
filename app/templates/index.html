@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Travel Spots</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700;800&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
   <script>
     window.APP_CONFIG = {
@@ -20,11 +23,33 @@
 <body>
   <div class="app-layout">
     <nav class="sidebar" aria-label="Conversations">
-      <button type="button" id="new-chat-button" class="new-chat-button">+ New chat</button>
-      <ul id="conversation-list" class="conversation-list"></ul>
+      <a href="#top" class="sidebar-brand">
+        <span class="brand-mark-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"></path></svg>
+        </span>
+        <span class="sidebar-brand-text">Joey's Travel AI</span>
+      </a>
+      <button type="button" id="new-chat-button" class="new-chat-button">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+        Plan a new trip
+      </button>
+      <div class="conversation-list-wrap">
+        <span class="conversation-list-label">Recent trips</span>
+        <ul id="conversation-list" class="conversation-list"></ul>
+      </div>
+      <a href="https://the200.blog/" target="_blank" rel="noopener" class="sidebar-about-link">
+        <img src="/static/joey-avatar.jpg?v={{ asset_version }}" alt="" class="sidebar-about-avatar">
+        About Joey
+      </a>
     </nav>
     <div class="chat-page chat-page-empty">
       <div class="chat-header">
+        <a href="#top" class="brand-mark">
+          <span class="brand-mark-icon" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"></path></svg>
+          </span>
+          <span class="brand-wordmark">Joey's Travel AI</span>
+        </a>
         <button
           type="button"
           id="sidebar-toggle"
@@ -35,16 +60,31 @@
       </div>
       <div id="chat-log" class="chat-log" aria-live="polite">
         <div id="empty-state" class="empty-state">
-          <p class="empty-state-greeting">So happy that you stumbled onto my AI & engine! I'm Joey, a frequent traveler who's been to over 70 countries & 7 continents. A nomad for over 15 years, I lived in many cities, learned a lot and reviewed them all. Ask questions about my favorite restaurants, things to do, and city reviews to help plan your trip! Don't forget dessert spots, I love dessert!</p>
-          <div class="chat-form-slot"></div>
+          <div class="hero">
+            <div class="hero-main">
+              <span class="hero-badge">Your nomad friend, now an AI</span>
+              <h1 class="hero-title">Hey, I'm Joey.<br>Where are we going <span class="hero-title-accent">next?</span></h1>
+              <p class="hero-subtitle">15 years of nomad life, 70+ countries and every continent, reviewed. Ask me where to eat, what to do, and which cities are worth it. Don't forget dessert spots — I love dessert!</p>
+              <div class="chat-form-slot"></div>
+            </div>
+            <div class="stat-grid" aria-hidden="true">
+              <div class="stat-card stat-card-navy"><span class="stat-number">70+</span><span class="stat-label">countries</span></div>
+              <div class="stat-card stat-card-yellow"><span class="stat-number">7</span><span class="stat-label">continents</span></div>
+              <div class="stat-card stat-card-teal"><span class="stat-number">15</span><span class="stat-label">years nomad</span></div>
+              <div class="stat-card stat-card-accent"><span class="stat-number">∞</span><span class="stat-label">dessert stops</span></div>
+            </div>
+          </div>
           {% if suggestion_chips %}
           <div class="suggestion-section">
             <p class="suggestion-label">Try asking</p>
             <div class="suggestion-chips">
-              {% for label in suggestion_chips %}
-              <button type="button" class="suggestion-chip" data-question="{{ label }}">
-                <span class="suggestion-chip-dot" aria-hidden="true"></span>
-                <span class="suggestion-chip-text">{{ label }}</span>
+              {% for chip in suggestion_chips %}
+              <button type="button" class="suggestion-chip" data-question="{{ chip.question }}">
+                <span class="suggestion-chip-icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                </span>
+                <span class="suggestion-chip-city">{{ chip.city }}</span>
+                <span class="suggestion-chip-title">{{ chip.title }}</span>
               </button>
               {% endfor %}
             </div>
@@ -62,7 +102,9 @@
           autocomplete="off"
           required
         >
-        <button type="submit" class="chat-form-submit" aria-label="Send">→</button>
+        <button type="submit" class="chat-form-submit" aria-label="Send">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg>
+        </button>
       </form>
     </div>
   </div>

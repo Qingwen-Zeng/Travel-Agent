@@ -99,14 +99,17 @@ class ChatRequest(BaseModel):
     history: list[ChatMessage] = []
 
 
-# Curated (city, category) favorites for the homepage suggestion chips — pairs Joey's
-# favorite cities with a category he actually has saved spots for there.
+# Curated (db city, display city, short title, full question) favorites for the homepage
+# suggestion cards — pairs Joey's favorite cities with a category he actually has saved
+# spots for there. `db city` gates which chips show (must match app/queries.py's city
+# names); `display city`/`short title` are cosmetic (the card's two-line label); `full
+# question` is both the data-question and the literal text sent to the chat on click.
 FAVORITE_EXAMPLES = [
-    ("Taipei", "Taipei Restaurant Recommendations"),
-    ("NYC", "New York City Things To Do"),
-    ("Bangkok", "Bangkok Bars And Clubs"),
-    ("Boston", "Boston Dessert Spots"),
-    ("Lebanon", "Lebanon Restaurants"),
+    ("Taipei", "Taipei", "Restaurant recommendations", "Taipei Restaurant Recommendations"),
+    ("NYC", "New York City", "Things to do", "New York City Things To Do"),
+    ("Bangkok", "Bangkok", "Bars and clubs", "Bangkok Bars And Clubs"),
+    ("Boston", "Boston", "Dessert spots", "Boston Dessert Spots"),
+    ("Lebanon", "Lebanon", "Restaurants", "Lebanon Restaurants"),
 ]
 
 
@@ -123,7 +126,9 @@ def _asset_version(*relative_paths: str) -> str:
 def index(request: Request, conn=Depends(get_db)):
     known_city_names = {row["name"] for row in list_cities(conn)}
     suggestion_chips = [
-        label for city, label in FAVORITE_EXAMPLES if city in known_city_names
+        {"city": display_city, "title": title, "question": question}
+        for city, display_city, title, question in FAVORITE_EXAMPLES
+        if city in known_city_names
     ]
     return templates.TemplateResponse(
         request,
@@ -132,7 +137,7 @@ def index(request: Request, conn=Depends(get_db)):
             "suggestion_chips": suggestion_chips,
             "google_maps_browser_key": settings.google_maps_browser_key,
             "google_maps_map_id": settings.google_maps_map_id,
-            "asset_version": _asset_version("app.js", "style.css"),
+            "asset_version": _asset_version("app.js", "style.css", "joey-avatar.jpg"),
         },
     )
 
