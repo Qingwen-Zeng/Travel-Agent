@@ -217,7 +217,7 @@ html::-webkit-scrollbar-thumb {
   color: #a9b6da;
 }
 
-.sidebar-about-link {
+.sidebar-about {
   flex-shrink: 0;
   margin-top: auto;
   display: flex;
@@ -225,23 +225,46 @@ html::-webkit-scrollbar-thumb {
   gap: 10px;
   padding: 0.7rem;
   border-radius: 14px;
-  border: 1px solid #33456f;
-  color: #ffffff;
-  text-decoration: none;
-  font-weight: 500;
-  font-size: 0.9rem;
+  border: 2px solid var(--color-accent);
+  background: var(--color-accent);
+  box-shadow: 4px 4px 0 #ffffff;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
 }
 
-.sidebar-about-link:hover {
-  background: #1a2a52;
+.sidebar-about:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 #ffffff;
 }
 
 .sidebar-about-avatar {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 48px;
+  height: 48px;
   border-radius: 999px;
   object-fit: cover;
+}
+
+.sidebar-social-links {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar-social-link {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-accent-text);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.sidebar-social-link:hover {
+  color: #ffc83d;
 }
 
 .conversation-item.disabled,

@@ -18,8 +18,8 @@ Copy `.env.example` to `.env` and fill in real values.
 | `DATABASE_PATH` | No (default `travel.db`) | Path to the SQLite database the web app reads. |
 | `GOOGLE_MAPS_BROWSER_KEY` | Yes | See "Google API keys" below. |
 | `GOOGLE_MAPS_MAP_ID` | Yes | From Google Cloud Console → Map Management. Required for Advanced Markers. |
-| `LLM_API_KEY` | Yes | Anthropic API key. |
-| `LLM_MODEL` | Yes | e.g. `claude-sonnet-4-5`. |
+| `LLM_API_KEY` | Yes | Google Gemini API key. |
+| `LLM_MODEL` | Yes | e.g. `gemini-3.5-flash-lite`. |
 | `RATE_LIMIT_PER_HOUR` | No (default `10`) | Per-IP chat message cap, per hour. |
 | `DAILY_MESSAGE_CAP` | No (default `300`) | Site-wide chat message cap, per calendar day — the real ceiling, since it holds regardless of how many IPs appear. |
 | `GOOGLE_PLACES_API_KEY` | Only for the offline scripts | Never loaded by the web app — see below. |
@@ -176,8 +176,8 @@ certificate issuance and renewal automatically.
 
 Nothing in the code can bound spend on its own — these external steps are required:
 
-- **LLM provider:** set a hard monthly spend limit in the Anthropic console billing
-  settings.
+- **LLM provider:** set a hard monthly spend limit in the Google AI Studio / Google Cloud
+  billing settings for the Gemini API.
 - **Google Cloud:** set **both** of these — a budget alert only sends an email, it does not
   stop spending; only a quota limit actually caps usage:
   - A billing budget (for visibility/alerts).

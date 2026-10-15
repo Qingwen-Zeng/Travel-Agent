@@ -39,7 +39,7 @@ The reply is prose **plus** an interactive Google Map with those spots pinned on
 | Database | SQLite (WAL mode) |
 | Map | Google Maps JavaScript API with Advanced Markers |
 | Geocoding & place data | Google Places API (New) — Text Search at import time for coordinates (Step 3), Place Details + Photo Media later, offline, for ratings/contact/photos (Step 16) |
-| AI | Anthropic's Claude, called via LangGraph + `langchain-anthropic`'s `ChatAnthropic` (a real agent framework, replacing the original hand-rolled tool-calling loop — see Step 20) |
+| AI | Google Gemini, called via LangGraph + `langchain-google-genai`'s `ChatGoogleGenerativeAI` (a real agent framework, replacing the original hand-rolled tool-calling loop — see Step 20; the provider itself was swapped from Anthropic's Claude in Step 21, a one-line change since the graph only depends on LangChain's provider-agnostic `BaseChatModel` interface) |
 | Observability | LangSmith — fully automatic once `LANGSMITH_API_KEY` is set, via LangGraph/LangChain's own tracing (Step 20). No manual instrumentation anywhere in `app/`. |
 | Semantic retrieval | FAISS (local index) + `sentence-transformers` (local embeddings) |
 | Rate limiting | Hand-rolled in-process limiters (`app/limits.py`) — no third-party rate-limiting library was needed |
@@ -75,6 +75,12 @@ of an AI agent" became an explicit goal, plus wiring up LangSmith tracing now th
 LangSmith API key exists. It follows the same "Goal / Files / Design / Acceptance tests
 / Done when" shape as every other step.
 
+**Steps 21 and 22 continue the same post-hoc pattern.** Step 21 swaps the LLM provider
+from Anthropic to Google Gemini — a one-line change, made trivial by Step 20's
+framework-native design. Step 22 is a full visual redesign (homepage hero, sidebar,
+card-based spot mentions) built from external design mockups, applied without changing
+any of the DOM/JS contract the existing frontend code depended on.
+
 ---
 
 ## Repository layout
@@ -101,6 +107,7 @@ travel-agent/
 │   └── static/
 │       ├── app.js
 │       ├── style.css
+│       ├── joey-avatar.jpg  sidebar "About Joey" photo (Step 22)
 │       └── spot_photos/     downloaded place photos (Step 16, git-ignored)
 ├── scripts/
 │   ├── import_saved_places.py  offline Saved/ export → SQLite (Step 3)
@@ -814,6 +821,12 @@ Use a stub LLM client throughout — no test may make a network call.
 
 ### Page
 
+**The plain-chat visual design below is superseded by Step 22** (hero landing page,
+dedicated sidebar, card-based spot mentions) — the underlying mechanics described here
+(the empty-state/suggestion-chip pattern, reusing `renderMapPayload`, appending each
+reply's map into the growing log) are all still exactly how it works; only the look
+changed.
+
 The entire page is a single AI chat interface, not a separate map-browsing view: a
 centered column with a scrollable chat log and a message input pinned to the bottom.
 Styled like a general-purpose LLM chat UI (e.g. Claude.ai): user messages as right-aligned
@@ -1315,6 +1328,14 @@ and nothing about any conversation survives a refresh.
 
 # Step 19 — Clickable spot names in replies
 
+**This step's design is superseded by Step 22.** Exact-substring matching against a
+spot's full saved title silently failed for most real replies — the model rarely
+reproduces a DB title verbatim (dropped bracketed alt names, rephrased qualifiers) — so
+it could never guarantee a link for every spot actually discussed. Step 22 replaces it
+with card-style mentions matched by significant-word overlap against bolded phrases.
+The *goal* below (click a spot, jump to its map detail) is unchanged; only the matching
+mechanism and the visual result (a card, not an inline link) changed.
+
 **Goal:** when a reply mentions a saved spot by name, let the visitor click that name to
 jump straight to its detail view on the map below — without a second tool round-trip.
 
@@ -1501,6 +1522,146 @@ Step 7's tool description, Step 9's SSE shape) carried over unchanged.
 
 ---
 
+# Step 21 — Switch LLM provider to Google Gemini
+
+**Goal:** swap the LLM provider with no agent-architecture changes, proving out
+Step 20's provider-agnostic design.
+
+**Files:** `app/main.py`, `requirements.txt`
+
+### Design
+
+LangGraph's `call_model` node only depends on LangChain's standard `BaseChatModel`
+interface (`.bind_tools()`, `.invoke()`) — nothing in `app/agent.py`, `app/chat.py`, or
+`app/llm.py` references a specific provider. Swapping providers is therefore a one-line
+change in `app/main.py`: `ChatAnthropic(...)` → `ChatGoogleGenerativeAI(...)` (from
+`langchain-google-genai`), same constructor shape (`model`, `api_key`, `max_tokens`).
+`requirements.txt` drops `anthropic`/`langchain-anthropic`, adds
+`langchain-google-genai`. `LLM_API_KEY`/`LLM_MODEL` (Step 1) are already provider-neutral
+names — only their *values* change, nothing in `app/config.py`.
+
+### Done when
+
+The full suite passes unchanged (same 182 tests as Step 20 — a provider swap touches no
+test-covered logic), and a live request against the real Gemini API round-trips
+correctly, including a full tool-calling turn (`get_city_context` → `show_city_map`).
+
+---
+
+# Step 22 — Homepage, sidebar, and chat UI redesign
+
+**Goal:** apply a cohesive visual design — a hero landing page, a dedicated sidebar, and
+card-based spot mentions — in place of the original plain-chat layout, without changing
+any of the DOM/JS contract the existing frontend code depends on (`#chat-log`,
+`#empty-state`, `.chat-form-slot`, `#chat-form`, `.suggestion-chip[data-question]`,
+`renderMapPayload`, `container.selectSpot`).
+
+**Files:** `app/templates/index.html`, `app/static/style.css`, `app/static/app.js`,
+`app/main.py`, `app/llm.py`, `app/static/joey-avatar.jpg` (new)
+
+### Homepage hero
+
+Replaces the old plain-text greeting inside `#empty-state` with a badge pill, a large
+headline, a subtitle, the unchanged `#chat-form` (still relocated into
+`.chat-form-slot` by the Step 9 mechanism), a decorative stat-card grid, and the
+existing suggestion chips restyled as a card grid (icon + city + title). To support
+the two-line card label, `FAVORITE_EXAMPLES` in `app/main.py` grew from
+`(db_city, question)` pairs to `(db_city, display_city, title, question)` tuples —
+`display_city`/`title` are purely cosmetic; `question` is unchanged, still both the
+card's `data-question` and the literal text sent to the chat on click.
+
+### Sidebar
+
+The brand mark and an "About Joey" link (new — `app/static/joey-avatar.jpg`, a cropped
+personal photo) now live in the sidebar itself; "+ New chat" is restyled to "Plan a new
+trip". `renderSidebar()` in `app/static/app.js` builds a richer per-conversation row: a
+colored badge (the title's first letter, cycling through a fixed palette by list
+position — not a fabricated city code, since titles are freeform first-message text,
+not structured data) plus a real relative timestamp (`relativeTime()`, driven by a
+`createdAt` field now stored on each conversation object).
+
+Clicking the logo (`.sidebar-brand`, or the mobile-only `.brand-mark` left in the main
+header) calls the same `createConversation()` the "Plan a new trip" button uses — but
+only when the *current* conversation already has messages
+(`activeConversation().transcript.length === 0` short-circuits to a no-op instead).
+Without that guard, clicking the logo while already on an empty conversation spams a
+fresh empty entry into "Recent trips" on every click.
+
+### Page-level scrolling; the sidebar is `fixed`, not `sticky`
+
+The original chat log scrolled inside its own fixed-height box (an app-shell pattern:
+`.chat-page { height: 100vh }`, `.chat-log { overflow-y: auto }`). Replaced with a
+normal scrolling document — `.chat-log` lost its own `overflow-y`, and `app.js`'s four
+`log.scrollTop = log.scrollHeight` auto-scroll call sites became one shared
+`scrollChatToBottom()` that scrolls the window instead.
+
+The sidebar is `position: fixed` at `width: 260px`, with `.app-layout` reserving
+`padding-left: 288px` (260px for the sidebar, plus ~28px so the content column isn't
+flush against it). **`position: sticky` was tried first and doesn't work for this**: a
+sticky element can only stay pinned within its own containing block's height, so once a
+conversation grows taller than one screen, a sticky sidebar runs out of room near the
+bottom and its edge lifts off the viewport, exposing the page background underneath.
+`fixed` pins it to the viewport itself instead of the document, which makes it immune
+to document length entirely — verified by checking the sidebar's bounding box at the
+top, middle, and bottom scroll positions of a long conversation; all three were
+identical (full 0–viewport-height).
+
+### Spot-mention cards (supersedes Step 19)
+
+See the note on Step 19 for why exact-substring matching was replaced. The new
+`renderSpotCards()` (`app/static/app.js`) works off a signal the system prompt already
+produces: every spot name the model mentions is **bold**. Every `<strong>` segment in a
+rendered reply is a match candidate, scored against the real spot list by
+significant-word overlap — normalized for case/punctuation, scored against both a
+spot's full title and its title with any trailing `(...)` dropped (whichever scores
+higher, since a DB title's parenthetical is sometimes a meaningful English qualifier to
+keep, e.g. `"Din Tai Fung (Xinyi)"`, and sometimes a foreign-language alt name to drop,
+e.g. `"Zi Lin Steamed Dumpling (頂好紫琳蒸餃館)"` — there's no reliable way to tell intent
+apart, so both variants are tried and the better match wins). A candidate needs ≥60% of
+a title's significant words present to count. Verified directly (a temporary debug hook,
+removed before committing) against both real failure modes above — both now match
+correctly — plus a decoy bold phrase ("**26 restaurant spots**") that correctly
+produces no match.
+
+Each matched spot renders as a card (numbered badge, title, category pill, saved note)
+in a `.spot-cards` grid inserted between the bubble and its map. Clicking one calls the
+same `container.selectSpot(index)` jump-to-map-detail behavior Step 19 established — the
+delegated click handler now anchors on `.spot-card`/`.spot-cards` instead of
+`.spot-name-link`/`.chat-bubble-assistant`, walking forward siblings to find the `.chat-map`
+exactly as before.
+
+### System prompt: stop duplicating card content
+
+Because a card now shows a spot's category and saved note automatically, the system
+prompt's instruction for listing several spots (`app/llm.py`) changed: mention each by a
+brief **bold** clause woven into prose, not a bulleted "Name: description" breakdown —
+that full description now only lives in the card below, and restating it is pure
+duplication. A full descriptive answer is still expected when someone asks about *one
+specific spot* directly — there's nothing to deduplicate against in that case, so that
+guidance is unchanged.
+
+### Chat column width and position
+
+`.chat-page`'s `max-width` grew from 720px to 900px, cutting down the empty side
+margins on wide screens. Combined with the sidebar's extra 28px of breathing room
+above, this also fixed a perceptual-balance issue: centering the column purely within
+the space *remaining after* the sidebar measured as even, but the sidebar's own visual
+weight (a solid navy block with nothing symmetric on the right) still read as
+left-heavy — nudging the column right compensates for that.
+
+### Done when
+
+Full suite still passes (182 tests — this step touched no backend logic except
+`FAVORITE_EXAMPLES`'s shape and the system prompt text, both already covered). Verified
+live, interactively, with a real browser: the hero renders and its suggestion cards
+trigger real chat turns; a long real conversation scrolls the whole page while the
+sidebar stays pinned top-to-bottom at every scroll position, including past the bottom
+of the document; the logo creates a new conversation only when the current one has
+actually started; a real model reply's bolded spot mentions correctly produce cards
+that jump to the right map detail view on click.
+
+---
+
 ## Verification checklist
 
 Confirm each before considering the project complete.
@@ -1539,8 +1700,13 @@ Confirm each before considering the project complete.
 - [ ] Switching away from an empty conversation never breaks the page or destroys the
       chat input (the singleton `#chat-form` is moved to safety before `#chat-log` is
       cleared).
-- [ ] Clickable spot names in replies only ever reference spots already present in an
-      already-rendered map payload — they introduce no new coordinate source.
+- [ ] Spot-mention cards only ever reference spots already present in that reply's own
+      `map_payload.markers` (`renderSpotCards` indexes directly into the array the tool
+      already returned) — they introduce no new coordinate source.
+- [ ] Spot-mention matching works off bolded phrases, not an exact-substring search
+      against the full saved title — verify against a title with a parenthetical (e.g.
+      a bracketed native-language alt name) and a model phrasing that doesn't reproduce
+      it verbatim; it should still match.
 - [ ] An unknown `city`/`categories` value is rejected by the tool's Pydantic schema, not
       silently accepted or passed through to a query.
 - [ ] The coordinate-stripping property (no `lat`/`lng` in what the model sees) holds via
@@ -1556,4 +1722,10 @@ Confirm each before considering the project complete.
 - [ ] LangSmith tracing is fully automatic (no `@traceable`, no `wrap_anthropic()`
       anywhere in `app/`), and `LANGSMITH_PROJECT` matches the project name in the
       LangSmith UI exactly, including case.
+- [ ] The sidebar is `position: fixed`, not `sticky` — check its bounding box at the
+      top, middle, and bottom scroll position of a conversation taller than one
+      screen; all three must show the same full-viewport height.
+- [ ] Clicking the logo only starts a new conversation when the current one already has
+      messages (`transcript.length > 0`) — clicking it repeatedly on an unstarted
+      conversation must never add entries to "Recent trips".
 - [ ] The full test suite passes with no network access.
